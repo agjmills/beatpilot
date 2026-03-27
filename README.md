@@ -75,7 +75,7 @@ If you install the plugin without ChucK, you'll see a reminder message in Claude
 
 ```
 /plugin marketplace add agjmills/beatpilot
-/plugin install beatpilot
+/plugin install beatpilot@beatpilot
 ```
 
 This registers the hooks automatically and gives you `/music` (toggle) and `/vibe` (switch genre) commands.
@@ -97,7 +97,7 @@ This adds hooks to your global `~/.claude/settings.json`. Restart Claude Code to
 ./uninstall.sh
 
 # Plugin install
-/plugin uninstall beatpilot
+/plugin uninstall beatpilot@beatpilot
 ```
 
 ## Usage
