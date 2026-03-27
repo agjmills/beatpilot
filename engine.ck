@@ -198,7 +198,6 @@ fun void readState() {
 // ============ MAIN SEQUENCER ============
 while(true) {
     stepCount % 16 => int s;
-    seed % 3 => int rot;
 
     // ---- BAR BOUNDARY ----
     if(s == 0) {
@@ -278,14 +277,15 @@ while(true) {
     }
 
     // ---- HATS ----
-    (s + rot) % 16 => int sRot;
     if(hatFill) {
-        // Fill: rapid-fire hats every step, getting louder
+        // Fill: rapid-fire hats every step
         chEnv.keyOn();
         if(s % 2 == 0) ohEnv.keyOn();
     } else {
-        if(chPat[energy][sRot]) chEnv.keyOn();
-        if(ohPat[energy][sRot]) ohEnv.keyOn();
+        if(chPat[energy][s]) chEnv.keyOn();
+        if(ohPat[energy][s]) ohEnv.keyOn();
+        // Occasional ghost hat for subtle variation (not on every step)
+        if(energy >= 2 && Math.random2(0, 15) == 0 && !chPat[energy][s]) chEnv.keyOn();
     }
 
     // ---- CLAP ----
@@ -293,17 +293,16 @@ while(true) {
 
     // ---- BASS ----
     if(transition != 4) {
-        (s + rot) % 16 => int bStep;
         -1 => int bDeg;
-        if(variant == 0) bPatA[energy][bStep] => bDeg;
-        else bPatB[energy][bStep] => bDeg;
+        if(variant == 0) bPatA[energy][s] => bDeg;
+        else bPatB[energy][s] => bDeg;
 
         if(energy >= 1 && bDeg >= 0) {
             if(Math.random2(0, 4) == 0) Math.random2(0, 4) => bDeg;
             2 => int bassOct;
-            if(bOctUp[energy][bStep] || Math.random2(0, 6) == 0) 3 => bassOct;
+            if(bOctUp[energy][s] || Math.random2(0, 6) == 0) 3 => bassOct;
             Std.mtof(note(bDeg, bassOct)) => bassOsc.freq;
-            if(bAcc[energy][bStep]) {
+            if(bAcc[energy][s]) {
                 2000.0 + Math.random2f(0.0, 1500.0) => bassFiltTarget;
             } else {
                 600.0 + Math.random2f(0.0, 800.0) => bassFiltTarget;
