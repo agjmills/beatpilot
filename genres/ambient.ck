@@ -28,14 +28,16 @@ fun int note(int degree, int octave) {
     return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
 }
 
-// ============ DRONE (low pad, always present) ============
-TriOsc drone1 => LPF droneFilt => Gain droneG => master;
-TriOsc drone2 => droneFilt;
-0.4 => drone1.gain; 0.4 => drone2.gain;
-400.0 => droneFilt.freq; 1.0 => droneFilt.Q;
+// ============ DRONE (FM synthesis — evolving, glassy) ============
+SinOsc droneMod => SinOsc droneCarr => LPF droneFilt => Gain droneG => master;
+2 => droneCarr.sync;  // FM mode: input modulates frequency
+0.3 => droneCarr.gain;
+20.0 => droneMod.gain;  // modulation depth (Hz)
 0.0 => droneG.gain;
 0.0 => float droneAmpTarget;
 0.0 => float droneAmpCurrent;
+20.0 => float droneModTarget;
+300.0 => droneFilt.freq; 0.5 => droneFilt.Q;
 
 // ============ PAD (mid-range, slow chords) ============
 SinOsc pad1 => LPF padFilt => Gain padG => master;
@@ -60,6 +62,26 @@ SinOsc subDrone => LPF subFilt => Gain subG => master;
 0.0 => subG.gain;
 0.0 => float subAmpTarget;
 0.0 => float subAmpCurrent;
+
+// ============ ARPEGGIO (sparse delayed plucks) ============
+SinOsc arp => LPF arpFilt => Gain arpG => DelayL arpDly => Gain arpWet => master;
+arp => arpFilt => arpG => master;  // dry path
+0.4 => arpDly.gain;
+0.45::second => arpDly.max;
+0.42::second => arpDly.delay;
+0.0 => arpWet.gain;
+800.0 => arpFilt.freq; 0.7 => arpFilt.Q;
+0.0 => arpG.gain;
+0.0 => float arpAmpTarget;
+0.0 => float arpAmpCurrent;
+-1 => int lastArpDeg;
+
+// ============ TEXTURE (filtered noise breath) ============
+Noise texN => BPF texBP => Gain texG => master;
+800.0 => texBP.freq; 3.0 => texBP.Q;
+0.0 => texG.gain;
+0.0 => float texAmpTarget;
+0.0 => float texAmpCurrent;
 
 // ============ STATE FILE READER ============
 fun void readState() {
@@ -86,12 +108,13 @@ fun void readState() {
 
             // Drone always on
             0.06 => droneAmpTarget;
-            Std.mtof(note(0, 2)) => drone1.freq;
-            drone1.freq() * 1.003 => drone2.freq;
+            Std.mtof(note(0, 2)) => droneCarr.freq;
+            droneCarr.freq() * 1.5 => droneMod.freq;  // mod ratio 3:2 for glassy timbre
             Std.mtof(note(0, 1)) => subDrone.freq;
             0.05 => subAmpTarget;
 
-            if(energy >= 2) 0.04 => padAmpTarget;
+            if(energy >= 1) { 0.03 => arpAmpTarget; 0.03 => arpWet.gain; }
+            if(energy >= 2) { 0.04 => padAmpTarget; 0.008 => texAmpTarget; }
         }
     }
 }
@@ -107,7 +130,8 @@ while(true) {
         if(barsSinceEvent > 10 && energy > 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
-            if(energy < 2) 0.0 => padAmpTarget;
+            if(energy < 2) { 0.0 => padAmpTarget; 0.0 => texAmpTarget; }
+            if(energy < 1) { 0.0 => arpAmpTarget; 0.0 => arpWet.gain; }
         }
         if(barsSinceEvent > 18) {
             0.0 => masterTarget;
@@ -116,23 +140,47 @@ while(true) {
         }
     }
 
-    // ---- PAD CHORD (change every 4 bars) ----
-    if(energy >= 2 && s == 0 && stepCount % 64 == 0) {
+    // ---- PAD CHORD (change every 2 bars) ----
+    if(energy >= 2 && s == 0 && stepCount % 32 == 0) {
         Math.random2(0, 4) => int root;
         if(root == lastPadRoot) (root + Math.random2(1, 3)) % 5 => root;
         root => lastPadRoot;
         Std.mtof(note(root, 3)) => pad1.freq;
         Std.mtof(note(root + 2, 3)) => pad2.freq;
-        Std.mtof(note(root + 4, 4)) => pad3.freq;
+        Std.mtof(note(root + 4, 3)) => pad3.freq;
         0.04 => padAmpTarget;
+        // Shift drone root to follow chord occasionally
+        if(Math.random2(0, 2) == 0) {
+            Std.mtof(note(root, 2)) => droneCarr.freq;
+            droneCarr.freq() * 1.5 => droneMod.freq;
+        }
+    }
+
+    // ---- ARPEGGIO (sparse melodic plucks with delay) ----
+    if(energy >= 1 && Math.random2(0, 99) < 8 && arpAmpCurrent < 0.005) {
+        // Pick from scale degrees that sound consonant with current root
+        [0, 2, 4, 7] @=> int safeDeg[];
+        safeDeg[Math.random2(0, 3)] => int deg;
+        if(deg == lastArpDeg) safeDeg[(deg + 1) % 4] => deg;
+        deg => lastArpDeg;
+        3 + Math.random2(0, 2) => int arpOct;
+        Std.mtof(note(deg, arpOct)) => arp.freq;
+        0.03 => arpAmpTarget;
     }
 
     // ---- SHIMMER (rare, high notes) ----
-    if(energy >= 1 && Math.random2(0, 99) < 3 && shimAmpCurrent < 0.005) {
-        Math.random2(0, 4) => int deg;
-        5 + Math.random2(0, 1) => int oct;
+    if(energy >= 1 && Math.random2(0, 99) < 5 && shimAmpCurrent < 0.005) {
+        [0, 2, 4, 7] @=> int shimDeg[];
+        shimDeg[Math.random2(0, 3)] => int deg;
+        5 => int oct;
         Std.mtof(note(deg, oct)) => shimmer.freq;
-        0.03 => shimAmpTarget;
+        0.025 => shimAmpTarget;
+    }
+
+    // ---- TEXTURE (noise breath, swells at higher energy) ----
+    if(energy >= 2 && s == 0 && Math.random2(0, 3) == 0) {
+        400.0 + Math.random2f(0.0, 800.0) => texBP.freq;
+        0.008 => texAmpTarget;
     }
 
     // ---- SUBSTEP UPDATES ----
@@ -151,8 +199,20 @@ while(true) {
         shimAmpCurrent => shimG.gain;
         if(shimAmpTarget > 0.002) shimAmpTarget * 0.998 => shimAmpTarget;
 
-        // Slow filter drift on drone
-        400.0 + 300.0 * Math.sin(stepCount * 0.001) => droneFilt.freq;
+        // Arp envelope (quick attack, medium decay)
+        arpAmpCurrent + (arpAmpTarget - arpAmpCurrent) * 0.03 => arpAmpCurrent;
+        arpAmpCurrent => arpG.gain;
+        if(arpAmpTarget > 0.002) arpAmpTarget * 0.995 => arpAmpTarget;
+
+        // Texture breath
+        texAmpCurrent + (texAmpTarget - texAmpCurrent) * 0.004 => texAmpCurrent;
+        texAmpCurrent => texG.gain;
+        if(texAmpTarget > 0.001) texAmpTarget * 0.9995 => texAmpTarget;
+
+        // Slow FM depth drift — gentle range to stay tonal
+        15.0 + 20.0 * Math.sin(stepCount * 0.0005) => droneModTarget;
+        droneMod.gain() + (droneModTarget - droneMod.gain()) * 0.003 => droneMod.gain;
+        250.0 + 80.0 * Math.sin(stepCount * 0.0003) => droneFilt.freq;
 
         masterGain + (masterTarget - masterGain) * 0.008 => masterGain;
         masterGain => master.gain;
