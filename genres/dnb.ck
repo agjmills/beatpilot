@@ -17,6 +17,7 @@
 0 => int barsSinceEvent;
 0.0 => float masterGain;
 0.0 => float masterTarget;
+0.8 => float volume;
 0 => int variant;
 
 // ============ PHRASE / CHORD PROGRESSION ============
@@ -386,6 +387,12 @@ while(true) {
 
     if(s == 0) {
         readState();
+        FileIO vf;
+        if(vf.open("/tmp/beatpilot-volume", FileIO.READ)) {
+            Std.atoi(vf.readLine()) => int vol;
+            vf.close();
+            if(vol >= 0 && vol <= 100) vol / 100.0 => volume;
+        }
         barsSinceEvent + 1 => barsSinceEvent;
 
         // Transition bar countdown
@@ -701,7 +708,7 @@ while(true) {
 
         // Master
         masterGain + (masterTarget - masterGain) * 0.02 => masterGain;
-        masterGain => master.gain;
+        masterGain * volume => master.gain;
 
         thisStepDur / SUBSTEPS => now;
     }

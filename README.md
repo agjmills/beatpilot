@@ -16,6 +16,7 @@ Switch genres with `/vibe <genre>` inside Claude, or `./vibe.sh <genre>` from th
 | **dnb** | 174 | Breakbeats, heavy sub bass, reese, atmospheric pads |
 | **lofi** | 85 | Jazzy chords, brushy drums, vinyl crackle, mellow |
 | **ambient** | 70 | No drums, slow drones, shimmering pads, pure texture |
+| **dub** | 75 | One-drop drums, heavy sub bass, delay throws, skank guitar |
 
 ## How it works
 
@@ -108,8 +109,9 @@ alias claude='claude --add-dir /path/to/beatpilot'
 Alternatively, symlink the skills to your global Claude config:
 
 ```bash
-ln -s /path/to/beatpilot/skills/music ~/.claude/skills/music
-ln -s /path/to/beatpilot/skills/vibe ~/.claude/skills/vibe
+ln -s /path/to/beatpilot/skills/bp:music ~/.claude/skills/bp:music
+ln -s /path/to/beatpilot/skills/bp:vibe ~/.claude/skills/bp:vibe
+ln -s /path/to/beatpilot/skills/bp:volume ~/.claude/skills/bp:volume
 ```
 
 ### Uninstall
@@ -129,7 +131,7 @@ Once installed, music starts automatically when you begin a Claude session.
 ### Toggle on/off
 
 ```
-/music
+/bp:music
 ```
 
 Or from the terminal: `./toggle.sh`
@@ -137,15 +139,25 @@ Or from the terminal: `./toggle.sh`
 ### Switch genre
 
 ```
-/vibe dnb
-/vibe lofi
-/vibe ambient
-/vibe techno
+/bp:vibe dnb
+/bp:vibe lofi
+/bp:vibe ambient
+/bp:vibe techno
+/bp:vibe dub
 ```
 
 Or from the terminal: `./vibe.sh dnb`
 
-Run `/vibe` or `./vibe.sh` with no argument to list available genres.
+Run `/bp:vibe` or `./vibe.sh` with no argument to list available genres.
+
+### Volume
+
+```
+/bp:volume 50
+/bp:volume      # show current volume
+```
+
+Or from the terminal: `./volume.sh 50`
 
 ### Manual control
 
@@ -165,21 +177,25 @@ beatpilot/
 ├── vibe.sh                # Switch genre
 ├── install.sh             # Manual installer
 ├── uninstall.sh           # Manual uninstaller
+├── volume.sh              # Set volume (0-100)
 ├── genres/
 │   ├── techno.ck          # 128 BPM — kicks, acid bass, drops
 │   ├── dnb.ck             # 174 BPM — breakbeats, reese, pads
 │   ├── lofi.ck            # 85 BPM — jazzy chords, vinyl crackle
-│   └── ambient.ck         # 70 BPM — drones, shimmers, no drums
+│   ├── ambient.ck         # 70 BPM — drones, shimmers, no drums
+│   └── dub.ck             # 75 BPM — one-drop, delay throws, sub bass
 ├── .claude-plugin/
 │   ├── plugin.json        # Plugin manifest
 │   └── marketplace.json   # Marketplace definition
 ├── hooks/
 │   └── hooks.json         # Hook config for plugin installs
 └── skills/
-    ├── music/
-    │   └── SKILL.md       # /music — toggle on/off
-    └── vibe/
-        └── SKILL.md       # /vibe — switch genre
+    ├── bp:music/
+    │   └── SKILL.md       # /bp:music — toggle on/off
+    ├── bp:vibe/
+    │   └── SKILL.md       # /bp:vibe — switch genre
+    └── bp:volume/
+        └── SKILL.md       # /bp:volume — set volume
 ```
 
 ## Customization

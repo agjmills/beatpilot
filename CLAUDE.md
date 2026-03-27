@@ -182,4 +182,5 @@ This registers the hooks and skills automatically.
 - `hook.sh` — event handler, writes state file
 - `start.sh` / `stop.sh` / `toggle.sh` — engine lifecycle
 - `vibe.sh` — genre switcher
-- `skills/` — Claude Code slash commands (`/music`, `/vibe`)
+- `volume.sh` — volume control (0-100)
+- `skills/` — Claude Code slash commands (`/bp:music`, `/bp:vibe`, `/bp:volume`)

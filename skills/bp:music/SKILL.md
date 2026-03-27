@@ -1,5 +1,5 @@
 ---
-name: music
+name: bp:music
 description: Toggle Beatpilot on or off
 user-invocable: true
 ---

@@ -16,6 +16,7 @@
 0 => int barsSinceEvent;
 0.0 => float masterGain;
 0.0 => float masterTarget;
+0.8 => float volume;
 0 => int phraseStep;
 
 // ============ ARP LINE (64 steps = 4 bars of 16 steps) ============
@@ -307,6 +308,12 @@ while(true) {
 
     if(s == 0) {
         readState();
+        FileIO vf;
+        if(vf.open("/tmp/beatpilot-volume", FileIO.READ)) {
+            Std.atoi(vf.readLine()) => int vol;
+            vf.close();
+            if(vol >= 0 && vol <= 100) vol / 100.0 => volume;
+        }
         barsSinceEvent + 1 => barsSinceEvent;
 
         // Advance chord progression: change every 4 bars
@@ -587,7 +594,7 @@ while(true) {
 
         // Master
         masterGain + (masterTarget - masterGain) * 0.006 => masterGain;
-        masterGain => master.gain;
+        masterGain * volume => master.gain;
 
         stepDur / SUBSTEPS => now;
     }

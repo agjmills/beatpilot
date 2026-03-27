@@ -1,6 +1,6 @@
 ---
-name: vibe
-description: Switch Beatpilot music genre (techno, dnb, lofi, ambient)
+name: bp:vibe
+description: Switch Beatpilot music genre (techno, dnb, lofi, ambient, dub)
 user-invocable: true
 ---
 
