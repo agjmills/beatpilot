@@ -1,0 +1,13 @@
+{
+  "name": "beatpilot",
+  "owner": {
+    "name": "Alex"
+  },
+  "plugins": [
+    {
+      "name": "beatpilot",
+      "description": "Generative techno soundtrack for Claude Code sessions, powered by ChucK.",
+      "source": "."
+    }
+  ]
+}

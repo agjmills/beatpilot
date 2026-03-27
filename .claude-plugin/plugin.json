@@ -1,0 +1,8 @@
+{
+  "name": "beatpilot",
+  "description": "Generative techno soundtrack for your Claude Code sessions. Music evolves in real-time based on what Claude is doing — prompts, tool calls, agents, and errors all shape the groove.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Alex"
+  }
+}
