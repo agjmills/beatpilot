@@ -7,7 +7,10 @@
     {
       "name": "beatpilot",
       "description": "Generative techno soundtrack for Claude Code sessions, powered by ChucK.",
-      "source": "."
+      "source": {
+        "source": "github",
+        "repo": "agjmills/beatpilot"
+      }
     }
   ]
 }
