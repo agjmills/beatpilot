@@ -16,6 +16,14 @@
 0 => int barsSinceEvent;
 0.0 => float masterGain;
 0.0 => float masterTarget;
+0 => int phraseStep;
+
+// ============ ARP LINE (64 steps = 4 bars of 16 steps) ============
+int arpLine[64];
+
+// ============ ARRANGEMENT MASK (16 bars) ============
+// 0=drone only, 1=drone+sub, 2=+pad, 3=+shimmer+arp
+int arrangement[16];
 
 // ============ PHRASE / CHORD PROGRESSION ============
 // Mix of warm and dark progressions
@@ -157,6 +165,65 @@ SinOsc rumbleSin => rumbleG;
 0.0 => float rumbleAmpTarget;
 0.0 => float rumbleAmpCurrent;
 
+// ============ GENERATE ARRANGEMENT ============
+// Three types based on seed: 0=gradual build, 1=wave, 2=sparse
+fun void generateArrangement() {
+    seed % 3 => int arrType;
+    if(arrType == 0) {
+        // Gradual build: drone only -> full, then reset
+        [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 2, 2, 1, 0] @=> int gb[];
+        for(0 => int i; i < 16; i++) gb[i] => arrangement[i];
+    } else if(arrType == 1) {
+        // Wave: builds, strips, builds again
+        [0, 1, 2, 3, 3, 2, 1, 0, 0, 1, 2, 3, 3, 3, 2, 1] @=> int wv[];
+        for(0 => int i; i < 16; i++) wv[i] => arrangement[i];
+    } else {
+        // Sparse: mostly minimal with occasional full moments
+        [0, 0, 0, 1, 0, 0, 1, 2, 0, 0, 0, 3, 2, 1, 0, 0] @=> int sp[];
+        for(0 => int i; i < 16; i++) sp[i] => arrangement[i];
+    }
+}
+
+// ============ GENERATE ARP LINE ============
+// Places chord tones at musical positions across 64 steps (4 bars x 16 steps)
+// Sparse: 2-3 notes per bar, consonant with each chord
+fun void generateArp() {
+    // Clear
+    for(0 => int i; i < 64; i++) -1 => arpLine[i];
+
+    // For each of the 4 bars (each bar = 16 steps, each bar has its own chord)
+    for(0 => int bar; bar < 4; bar++) {
+        bar * 16 => int barStart;
+        progs[progIdx][bar % progs[progIdx].cap()] => int root;
+
+        // Chord tones: root, 3rd, 5th relative to chord root in the scale
+        [root, root + 2, root + 4] @=> int tones[];
+
+        // Seed-derived pattern: pick 2-3 positions per bar
+        // Use seed bits to vary which steps get notes
+        (seed + bar * 37) => int barSeed;
+
+        // Position 1: early in the bar (step 1-4)
+        1 + (barSeed % 4) => int pos1;
+        tones[barSeed % 3] => int tone1;
+        tone1 => arpLine[barStart + pos1];
+
+        // Position 2: mid-bar (step 7-11)
+        7 + ((barSeed / 3) % 5) => int pos2;
+        tones[(barSeed / 5) % 3] => int tone2;
+        // Avoid repeating the same tone
+        if(tone2 == tone1) tones[(tone2 + 1) % 3] => tone2;
+        tone2 => arpLine[barStart + pos2];
+
+        // Position 3: only on some bars (seed-dependent), late (step 12-14)
+        if((barSeed % 5) < 3) {
+            12 + ((barSeed / 7) % 3) => int pos3;
+            tones[(barSeed / 11) % 3] => int tone3;
+            tone3 => arpLine[barStart + pos3];
+        }
+    }
+}
+
 // ============ STATE FILE READER ============
 fun void readState() {
     FileIO f;
@@ -184,7 +251,12 @@ fun void readState() {
             }
             0 => phraseBar;
             0 => chordIdx;
+            0 => phraseStep;
             progs[progIdx][0] => chordRoot;
+
+            // Generate arp pattern and arrangement from seed
+            generateArp();
+            generateArrangement();
 
             newEnergy => energy;
             if(energy > 3) 3 => energy;
@@ -206,17 +278,24 @@ fun void readState() {
             droneCarr.freq() * 0.998 => droneWarm1.freq;
             droneCarr.freq() * 1.002 => droneWarm2.freq;
             Std.mtof(note(chordRoot, 1)) => subDrone.freq;
-            0.05 => subAmpTarget;
 
-            if(energy >= 1) 0.03 => arpAmpTarget;
-            if(energy >= 2) {
-                0.05 => padAmpTarget;
-                0.008 => texAmpTarget;
-                0.03 => shimAmpTarget;
+            // Arrangement mask gates initial layer targets
+            arrangement[0] => int initArr;
+            if(initArr >= 1) 0.05 => subAmpTarget;
+            else 0.0 => subAmpTarget;
+            if(initArr >= 2) {
+                0.04 => padAmpTarget;
+                0.006 => texAmpTarget;
+            } else {
+                0.0 => padAmpTarget;
+                0.0 => texAmpTarget;
             }
-            if(energy >= 3) {
-                0.04 => shimAmpTarget;
-                0.012 => texAmpTarget;
+            if(initArr >= 3) {
+                0.03 => shimAmpTarget;
+                0.03 => arpAmpTarget;
+            } else {
+                0.0 => shimAmpTarget;
+                0.0 => arpAmpTarget;
             }
         }
     }
@@ -237,16 +316,40 @@ while(true) {
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
         progs[progIdx][chordIdx] => chordRoot;
 
+        // ---- ARRANGEMENT GATING: control which layers are active ----
+        arrangement[phraseBar] => int arrLevel;
+        // Drone is always on
+        // Sub: arrangement >= 1
+        if(arrLevel >= 1) {
+            0.05 => subAmpTarget;
+        } else {
+            0.0 => subAmpTarget;
+        }
+        // Pad: arrangement >= 2, with dynamics following phrase position
+        if(arrLevel >= 2) {
+            phraseBar % 4 => int chordBar;
+            if(chordBar < 2) 0.04 => padAmpTarget;      // bars 1-2: gentle swell
+            else if(chordBar == 2) 0.07 => padAmpTarget; // bar 3: peak
+            else 0.03 => padAmpTarget;                     // bar 4: pull back
+            0.006 => texAmpTarget;
+        } else {
+            0.0 => padAmpTarget;
+            0.0 => texAmpTarget;
+        }
+        // Shimmer + arp: arrangement >= 3
+        if(arrLevel >= 3) {
+            0.03 => shimAmpTarget;
+            0.03 => arpAmpTarget;
+        } else {
+            0.0 => shimAmpTarget;
+            // Don't kill arp target mid-note, let it decay naturally
+            if(arpAmpCurrent < 0.002) 0.0 => arpAmpTarget;
+        }
+
         // Energy decay
         if(barsSinceEvent > 10 && energy > 0 && !autoActive) {
             energy - 1 => energy;
             0 => barsSinceEvent;
-            if(energy < 2) {
-                0.0 => padAmpTarget;
-                0.0 => texAmpTarget;
-                0.0 => shimAmpTarget;
-            }
-            if(energy < 1) 0.0 => arpAmpTarget;
         }
 
         // Auto-evolution instead of silence
@@ -378,7 +481,7 @@ while(true) {
     }
 
     // ---- PAD CHORD: follows progression, set on chord change ----
-    if(energy >= 2 && s == 0 && phraseBar % 4 == 0) {
+    if(arrangement[phraseBar] >= 2 && s == 0 && phraseBar % 4 == 0) {
         Std.mtof(note(chordRoot, 3)) => float p1;
         Std.mtof(note(chordRoot + 2, 3)) => float p2;
         Std.mtof(note(chordRoot + 4, 3)) => float p3;
@@ -386,38 +489,38 @@ while(true) {
         p1 * 0.997 => pad1a.freq; p1 * 1.003 => pad1b.freq;
         p2 * 0.997 => pad2a.freq; p2 * 1.003 => pad2b.freq;
         p3 * 0.998 => pad3a.freq; p3 * 1.002 => pad3b.freq;
-        0.05 => padAmpTarget;
         1400.0 + Math.random2f(0.0, 400.0) => padFiltTarget;
     }
 
     // ---- SHIMMER CLUSTER: triad an octave above pad ----
-    if(energy >= 2 && s == 0 && phraseBar % 8 == 0) {
+    if(arrangement[phraseBar] >= 3 && s == 0 && phraseBar % 8 == 0) {
         Std.mtof(note(chordRoot, 5)) => float s1;
         Std.mtof(note(chordRoot + 2, 5)) => float s2;
         Std.mtof(note(chordRoot + 4, 5)) => float s3;
         s1 => shim1.freq;
         s2 => shim2.freq;
         s3 * 1.001 => shim3.freq; // tiny detune for width
-        0.03 => shimAmpTarget;
-        if(energy >= 3) 0.04 => shimAmpTarget;
     }
 
-    // ---- ARPEGGIO: sparse consonant notes ----
-    if(energy >= 1 && Math.random2(0, 99) < 6 && arpAmpCurrent < 0.004) {
-        [0, 2, 4] @=> int safeDeg[];
-        (safeDeg[Math.random2(0, 2)] + chordRoot) % 5 => int deg;
-        if(deg == lastArpDeg) (deg + 2) % 5 => deg;
-        deg => lastArpDeg;
-        3 + Math.random2(0, 1) => int arpOct;
-        Std.mtof(note(deg, arpOct)) => arp.freq;
-        0.025 => arpAmpTarget;
+    // ---- ARPEGGIO: follows arpLine pattern instead of random dice ----
+    if(arpLine[phraseStep] >= 0 && arrangement[phraseBar] >= 3) {
+        arpLine[phraseStep] => int arpDeg;
+        if(arpDeg != lastArpDeg || arpAmpCurrent < 0.004) {
+            arpDeg => lastArpDeg;
+            3 + ((seed + phraseStep) % 2) => int arpOct;
+            Std.mtof(note(arpDeg, arpOct)) => arp.freq;
+            0.025 => arpAmpTarget;
+        }
     }
 
-    // ---- TEXTURE: noise breath, follows energy ----
-    if(energy >= 2 && s == 0 && Math.random2(0, 3) == 0) {
+    // ---- TEXTURE: noise breath, gated by arrangement ----
+    if(arrangement[phraseBar] >= 2 && s == 0 && Math.random2(0, 3) == 0) {
         300.0 + Math.random2f(0.0, 600.0) => texBP.freq;
         0.008 => texAmpTarget;
     }
+
+    // ---- Advance phraseStep (wraps at 64) ----
+    (phraseStep + 1) % 64 => phraseStep;
 
     // ---- SUBSTEP UPDATES ----
     for(0 => int sub; sub < SUBSTEPS; sub++) {
@@ -447,7 +550,7 @@ while(true) {
         padAmpTarget * (0.85 + 0.15 * Math.sin(padBreathPhase)) => float padBreathGain;
         padAmpCurrent + (padBreathGain - padAmpCurrent) * 0.005 => padAmpCurrent;
         padAmpCurrent => padG.gain;
-        if(padAmpTarget > 0.003) padAmpTarget * 0.99995 => padAmpTarget;
+        // Note: padAmpTarget is set per-bar by arrangement gating with phrase dynamics
         // Filter sweeps slowly
         Math.sin(padLfoPhase) * 300.0 => float padLfoMod;
         padFilt.freq() + ((padFiltTarget + padLfoMod) - padFilt.freq()) * 0.008 => padFilt.freq;

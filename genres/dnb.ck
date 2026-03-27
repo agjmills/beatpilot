@@ -28,42 +28,106 @@
 
 // ============ LEAD MOTIF (4-bar phrase) ============
 64 => int PHRASE_LEN;
-int motif[64];
+int motif[64];          // lead: scale degrees per step (-1 = rest)
+int bassLine[64];       // bass: scale degrees per step (-1 = rest)
 0 => int motifGenerated;
-0 => int phraseStep;
+0 => int phraseStep;    // current position in the 64-step phrase
+
+// Arrangement mask: which bars (0-15) have which layers active
+// 0=nothing, 1=bass only, 2=bass+pad, 3=bass+pad+lead
+int arrangement[16];
 
 fun void generateMotif() {
     seed => int s;
     for(0 => int i; i < PHRASE_LEN; i++) -1 => motif[i];
 
-    // DnB lead: longer sustained notes, fewer hits, more space for delay
-    int fig[4];
-    0 => fig[0];
-    (s % 3 + 1) => fig[1];
-    (s % 2 + 2) => fig[2];
-    ((s / 2) % 2) => fig[3];
+    // --- CELL-BASED COMPOSITION ---
+    // DnB: sparser than techno, more space for delay to breathe
 
-    // Bar 1: sparse call — 3 notes with space
-    fig[0] => motif[0];
-    fig[1] => motif[6];
-    fig[2] => motif[12];
+    int cellDeg[3];
+    int cellPos[3];
 
-    // Bar 2: response — shifted rhythm
-    fig[0] + 2 => motif[18];
-    fig[1] + 1 => motif[24];
-    fig[3] => motif[28];
+    0 => cellDeg[0];
+    [1, 2, -1, 2, 1, -2] @=> int leaps[];
+    leaps[s % leaps.cap()] => int leap1;
+    leap1 => cellDeg[1];
+    [-1, 0, 1, -1, 0] @=> int resolves[];
+    cellDeg[1] + resolves[(s / 2) % resolves.cap()] => cellDeg[2];
 
-    // Bar 3: climax — more notes, higher
-    fig[2] + 2 => motif[32];
-    fig[1] + 2 => motif[36];
-    fig[0] + 3 => motif[38];
-    fig[2] => motif[42];
-    fig[1] => motif[46];
+    // DnB cell rhythm: wider spacing, room for echoes
+    [[0, 6, 12], [0, 8, 14], [0, 4, 10], [2, 8, 12], [0, 6, 10]] @=> int cellRhythms[][];
+    cellRhythms[(s / 3) % cellRhythms.cap()] @=> int cR[];
+    cR[0] => cellPos[0]; cR[1] => cellPos[1]; cR[2] => cellPos[2];
 
-    // Bar 4: resolve — descend to root
-    fig[2] => motif[48];
-    fig[1] => motif[54];
-    0 => motif[60];
+    s % 3 => int varType;
+
+    // Bar 1: cell
+    for(0 => int i; i < 3; i++) cellDeg[i] => motif[cellPos[i]];
+
+    // Bar 2: cell varied
+    if(varType == 0) {
+        for(0 => int i; i < 3; i++) cellDeg[i] + 2 => motif[16 + cellPos[i]];
+    } else if(varType == 1) {
+        cellDeg[0] => motif[16 + cellPos[0]];
+        cellDeg[0] - leap1 => motif[16 + cellPos[1]];
+        cellDeg[0] - leap1 - resolves[(s / 2) % resolves.cap()] => motif[16 + cellPos[2]];
+    } else {
+        for(0 => int i; i < 3; i++) cellDeg[2 - i] + 1 => motif[16 + cellPos[i]];
+    }
+
+    // Bar 3: cell twice — transposed then original with approach
+    for(0 => int i; i < 3; i++) cellDeg[i] + 3 => motif[32 + cellPos[i]];
+    cellDeg[0] - 1 => motif[32 + 8];
+    cellDeg[0] => motif[32 + 10];
+    cellDeg[1] => motif[32 + 14];
+
+    // Bar 4: sparse resolve
+    cellDeg[1] => motif[48];
+    0 => motif[58];
+
+    // --- BASS LINE: derived from the same cell ---
+    // DnB bass is sparser than techno — 174 BPM needs more space
+    // Root on strong beats, cell's first interval as passing tones
+    for(0 => int i; i < PHRASE_LEN; i++) -1 => bassLine[i];
+
+    // Bar 1: root on 1, cell interval as passing tone, root again
+    0 => bassLine[0];
+    cellDeg[1] => bassLine[8];
+    0 => bassLine[12];
+
+    // Bar 2: same rhythm, transposed matching the cell variation
+    if(varType == 0) {
+        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[24]; 2 => bassLine[28];
+    } else if(varType == 1) {
+        0 => bassLine[16]; 0 - leap1 => bassLine[24]; 0 => bassLine[28];
+    } else {
+        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[24]; 1 => bassLine[28];
+    }
+
+    // Bar 3: busier mirroring lead development — more passing tones
+    0 => bassLine[32]; cellDeg[1] => bassLine[36];
+    3 => bassLine[40]; cellDeg[1] + 3 => bassLine[44];
+
+    // Bar 4: simple roots resolving — lots of space
+    0 => bassLine[48];
+    0 => bassLine[60];
+
+    // --- ARRANGEMENT: which bars have which layers ---
+    // 16-bar phrase with structure, not everything all the time
+    s % 3 => int arrType;
+    if(arrType == 0) {
+        // Build: bass -> +pad -> +lead -> strip
+        [1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,1,1] @=> int arrA[];
+        for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
+    } else if(arrType == 1) {
+        // Call-response: lead bars alternate with bass-only bars
+        [1,1,3,3, 1,1,3,3, 2,2,3,3, 3,3,2,1] @=> int arrB[];
+        for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
+    } else {
+        // Full then strip: everything then breakdown
+        [2,2,3,3, 3,3,3,3, 2,2,2,2, 1,1,2,2] @=> int arrC[];
+        for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
+    }
 
     0 => phraseStep;
     1 => motifGenerated;
@@ -189,11 +253,6 @@ SinOsc subOsc => Gain subG => master;
 0.0 => float subAmpTarget;
 0.0 => float subAmpCurrent;
 
-[[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
- [ 0,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
- [ 0,-1,-1,-1,-1,-1,-1,-1, 0,-1,-1,-1,-1,-1, 0,-1],
- [ 0,-1,-1, 0,-1,-1,-1,-1, 0,-1,-1,-1, 0,-1, 0,-1]] @=> int subPat[][];
-
 // ============ REESE BASS (follows chord root, detuned saws) ============
 SawOsc reese1 => LPF reeseFilt => Gain reeseG => master;
 SawOsc reese2 => reeseFilt;
@@ -308,11 +367,9 @@ fun void readState() {
             if(energy >= 1) {
                 0.10 => snG.gain;
                 0.10 => subG.gain;
-                0.05 => ldDry.gain;
             }
             if(energy >= 2) {
                 0.06 => reeseG.gain;
-                0.05 => padAmpTarget;
                 0.06 => stabG.gain;
             } else {
                 0.0 => reeseG.gain;
@@ -496,41 +553,55 @@ while(true) {
         }
     }
 
-    // ---- SUB BASS (follows chord root) ----
-    if(energy >= 1 && subPat[energy][s] >= 0) {
-        (subPat[energy][s] + chordRoot) % 5 => int subDeg;
-        Std.mtof(note(subDeg, 1)) => subOsc.freq;
-        0.15 => subAmpTarget;
+    // ---- ARRANGEMENT: determine what plays this bar ----
+    0 => int arrLevel;
+    if(motifGenerated) arrangement[phraseBar] => arrLevel;
+    if(energy < 2) { if(arrLevel > 1) 1 => arrLevel; }
+
+    // ---- SUB BASS (cell-derived, follows arrangement) ----
+    if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
+        bassLine[phraseStep % PHRASE_LEN] => int bDeg;
+        if(bDeg >= 0) {
+            (bDeg + chordRoot) % 5 => bDeg;
+            if(bDeg < 0) bDeg + 5 => bDeg;
+            Std.mtof(note(bDeg, 1)) => subOsc.freq;
+            0.15 => subAmpTarget;
+            // Reese follows bass root
+            Std.mtof(note(bDeg, 2)) => reese1.freq;
+            reese1.freq() * 1.008 => reese2.freq;
+            1200.0 + Math.random2f(0.0, 800.0) => reeseFiltTarget;
+        }
     }
 
-    // ---- REESE (follows chord root) ----
-    if(energy >= 2 && s % 8 == 0) {
-        Std.mtof(note(chordRoot, 2)) => reese1.freq;
-        reese1.freq() * 1.008 => reese2.freq;
-        1200.0 + Math.random2f(0.0, 800.0) => reeseFiltTarget;
-    }
-
-    // ---- PAD (detuned, follows progression) ----
-    if(energy >= 2 && s == 0 && phraseBar % 4 == 0) {
+    // ---- PAD (atmospheric, follows arrangement + phrase dynamics) ----
+    if(transition != 4 && s == 0 && arrLevel >= 2) {
         Std.mtof(note(chordRoot, 3)) => float p1;
         Std.mtof(note(chordRoot + 2, 3)) => float p2;
         Std.mtof(note(chordRoot + 4, 3)) => float p3;
         p1 * 0.997 => pad1a.freq; p1 * 1.003 => pad1b.freq;
         p2 * 0.997 => pad2a.freq; p2 * 1.003 => pad2b.freq;
         p3 * 0.998 => pad3a.freq; p3 * 1.002 => pad3b.freq;
-        0.05 => padAmpTarget;
-        1400.0 + Math.random2f(0.0, 400.0) => padFiltTarget;
+        // Pad dynamics follow phrase position: swell bars 1-3, pull back bar 4
+        phraseBar % 4 => int barInChord;
+        if(barInChord < 2) 0.04 => padAmpTarget;       // bars 1-2: gentle
+        else if(barInChord == 2) 0.08 => padAmpTarget;  // bar 3: peak
+        else 0.03 => padAmpTarget;                       // bar 4: pull back
+        if(energy >= 3) padAmpTarget * 1.3 => padAmpTarget;
+        1000.0 + barInChord * 150.0 => padFiltTarget;   // filter opens through phrase
+    } else if(arrLevel < 2) {
+        0.0 => padAmpTarget;
     }
 
-    // ---- LEAD (4-bar motif with velocity) ----
-    if(energy >= 1 && transition != 4 && motifGenerated) {
+    // ---- LEAD (4-bar motif, follows arrangement) ----
+    if(transition != 4 && motifGenerated && arrLevel >= 3) {
         motif[phraseStep % PHRASE_LEN] => int deg;
         if(deg >= 0) {
             (deg + chordRoot) % 5 => deg;
+            if(deg < 0) deg + 5 => deg;
             4 => int ldOct;
             if(energy >= 3 && phraseStep >= 32) 5 => ldOct;
             Std.mtof(note(deg, ldOct)) => ldCarr.freq;
-            // Mod ratio 3:2 = glassy bell, 2:1 = brighter, 5:3 = more metallic
+            // Mod ratio 3:2 = glassy bell
             ldCarr.freq() * 1.5 => ldMod.freq;
             // Vary mod depth per note for timbral movement
             60.0 + Math.random2f(0.0, 80.0) => ldModTarget;
@@ -544,6 +615,12 @@ while(true) {
             2400.0 + Math.random2f(0.0, 600.0) => ldFiltTarget;
             ldVel => ldAmpTarget;
         }
+    } else if(arrLevel < 3) {
+        0.0 => ldAmpTarget;
+    }
+
+    // Advance phrase step (shared by bass + lead)
+    if(motifGenerated) {
         phraseStep + 1 => phraseStep;
         if(phraseStep >= PHRASE_LEN) 0 => phraseStep;
     }

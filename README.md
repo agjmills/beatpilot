@@ -90,6 +90,28 @@ cd beatpilot
 
 This adds hooks to your global `~/.claude/settings.json`. Restart Claude Code to activate.
 
+### Option C: Global skills (for development)
+
+If you want to develop beatpilot while using it in other projects, add it as an extra directory:
+
+```bash
+claude --add-dir /path/to/beatpilot
+```
+
+Or make it permanent with a shell alias:
+
+```bash
+# ~/.zshrc or ~/.bashrc
+alias claude='claude --add-dir /path/to/beatpilot'
+```
+
+Alternatively, symlink the skills to your global Claude config:
+
+```bash
+ln -s /path/to/beatpilot/skills/music ~/.claude/skills/music
+ln -s /path/to/beatpilot/skills/vibe ~/.claude/skills/vibe
+```
+
 ### Uninstall
 
 ```bash

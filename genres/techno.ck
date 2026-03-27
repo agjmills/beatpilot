@@ -35,58 +35,108 @@
 // Bar 1: call (short figure), Bar 2: response (variation),
 // Bar 3: development (higher/busier), Bar 4: resolution (back to root)
 64 => int PHRASE_LEN;
-int motif[64];          // scale degrees per step (-1 = rest)
+int motif[64];          // lead: scale degrees per step (-1 = rest)
+int bassLine[64];       // bass: scale degrees per step (-1 = rest)
 0 => int motifGenerated;
 0 => int phraseStep;    // current position in the 64-step phrase
 
+// Arrangement mask: which bars (0-15) have which layers active
+// This gives the track structure — not everything plays all the time
+// 0=nothing, 1=bass only, 2=bass+pad, 3=bass+pad+lead
+int arrangement[16];
+
 fun void generateMotif() {
     seed => int s;
+    for(0 => int i; i < PHRASE_LEN; i++) -1 => motif[i];
 
-    // Start with all rests
-    for(0 => int i; i < PHRASE_LEN; i++) {
-        -1 => motif[i];
+    // --- CELL-BASED COMPOSITION ---
+    // Techno: denser than lofi, more repetitive/hypnotic
+
+    int cellDeg[3];
+    int cellPos[3];
+
+    0 => cellDeg[0];
+    [1, 2, -1, 2, 1, -2] @=> int leaps[];
+    leaps[s % leaps.cap()] => int leap1;
+    leap1 => cellDeg[1];
+    [-1, 0, 1, -1, 0] @=> int resolves[];
+    cellDeg[1] + resolves[(s / 2) % resolves.cap()] => cellDeg[2];
+
+    // Techno cell rhythm: tighter, more driving
+    [[0, 2, 4], [0, 4, 6], [0, 2, 6], [2, 4, 6], [0, 4, 8]] @=> int cellRhythms[][];
+    cellRhythms[(s / 3) % cellRhythms.cap()] @=> int cR[];
+    cR[0] => cellPos[0]; cR[1] => cellPos[1]; cR[2] => cellPos[2];
+
+    s % 3 => int varType;
+
+    // Bar 1: cell
+    for(0 => int i; i < 3; i++) cellDeg[i] => motif[cellPos[i]];
+
+    // Bar 2: cell varied
+    if(varType == 0) {
+        for(0 => int i; i < 3; i++) cellDeg[i] + 2 => motif[16 + cellPos[i]];
+    } else if(varType == 1) {
+        cellDeg[0] => motif[16 + cellPos[0]];
+        cellDeg[0] - leap1 => motif[16 + cellPos[1]];
+        cellDeg[0] - leap1 - resolves[(s / 2) % resolves.cap()] => motif[16 + cellPos[2]];
+    } else {
+        for(0 => int i; i < 3; i++) cellDeg[2 - i] + 1 => motif[16 + cellPos[i]];
     }
 
-    // Build a 4-note core figure from seed
-    int fig[4];
-    0 => fig[0];                    // start on root
-    (s % 3 + 1) => fig[1];         // step up (1-3)
-    (s % 2 + 2) => fig[2];         // higher (2-3)
-    ((s / 2) % 2) => fig[3];       // resolve toward root (0-1)
+    // Bar 3: cell twice — first transposed, then original with approach
+    for(0 => int i; i < 3; i++) cellDeg[i] + 3 => motif[32 + cellPos[i]];
+    cellDeg[0] - 1 => motif[32 + 8];
+    for(0 => int i; i < 3; i++) cellDeg[i] => motif[32 + 10 + i * 2];
 
-    // Bar 1 (steps 0-15): call — place the core figure
-    fig[0] => motif[0];
-    fig[1] => motif[4];
-    fig[2] => motif[(s % 2 + 6)];
-    fig[3] => motif[12];
+    // Bar 4: half cell + resolve
+    cellDeg[0] + 1 => motif[48];
+    cellDeg[1] => motif[52];
+    0 => motif[60];
 
-    // Bar 2 (steps 16-31): response — same rhythm, transposed up
-    fig[0] + 2 => motif[16];
-    fig[1] + 2 => motif[20];
-    fig[2] + 1 => motif[(s % 2 + 22)];
-    fig[0] + 1 => motif[28];
+    // --- BASS LINE: derived from the same cell ---
+    // Bass plays the cell's root notes on strong beats, with the cell's
+    // first interval as a passing tone. Simpler, anchoring the harmony.
+    for(0 => int i; i < PHRASE_LEN; i++) -1 => bassLine[i];
 
-    // Bar 3 (steps 32-47): development — busier, higher register
-    fig[2] => motif[32];
-    fig[1] + 2 => motif[34];
-    fig[2] + 2 => motif[36];
-    fig[3] + 3 => motif[38];
-    fig[0] + 2 => motif[40];
-    fig[1] => motif[44];
+    // Bar 1: root on 1, cell interval on the &
+    0 => bassLine[0];
+    cellDeg[1] => bassLine[6];
+    0 => bassLine[8];
 
-    // Bar 4 (steps 48-63): resolution — sparse, descend to root
-    fig[2] => motif[48];
-    fig[1] => motif[52];
-    fig[3] => motif[56];
-    0 => motif[60];                 // land on root
+    // Bar 2: same rhythm, transposed with the cell variation
+    if(varType == 0) {
+        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[22]; 2 => bassLine[24];
+    } else if(varType == 1) {
+        0 => bassLine[16]; 0 - leap1 => bassLine[22]; 0 => bassLine[24];
+    } else {
+        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[22]; 1 => bassLine[24];
+    }
 
-    // Add seed-based ghost notes for variation (low probability hits)
-    for(0 => int i; i < 6; i++) {
-        (s * (i + 7) + i * 53) % PHRASE_LEN => int pos;
-        if(motif[pos] < 0 && pos % 2 != 0) {
-            // Only on off-beats, and make them neighbors of nearby notes
-            (s + i) % 4 => motif[pos];
-        }
+    // Bar 3: busier — follows lead rhythm but stays on roots + passing tones
+    0 => bassLine[32]; cellDeg[1] => bassLine[34];
+    3 => bassLine[36]; cellDeg[1] + 3 => bassLine[38];
+    0 => bassLine[40]; cellDeg[2] => bassLine[44];
+
+    // Bar 4: simple — root, then rest until the resolve
+    0 => bassLine[48];
+    0 => bassLine[56];
+
+    // --- ARRANGEMENT: which bars have which layers ---
+    // 16-bar phrase with structure, not everything all the time
+    // Seed varies the arrangement shape
+    s % 3 => int arrType;
+    if(arrType == 0) {
+        // Build: bass → +pad → +lead → strip
+        [1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,1,1] @=> int arrA[];
+        for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
+    } else if(arrType == 1) {
+        // Call-response: lead bars alternate with bass-only bars
+        [1,1,3,3, 1,1,3,3, 2,2,3,3, 3,3,2,1] @=> int arrB[];
+        for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
+    } else {
+        // Full then strip: everything then breakdown
+        [2,2,3,3, 3,3,3,3, 2,2,2,2, 1,1,2,2] @=> int arrC[];
+        for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
     }
 
     0 => phraseStep;
@@ -510,68 +560,76 @@ while(true) {
     // ---- CLAP ----
     if(clpPat[energy][s]) clpEnv.keyOn();
 
-    // ---- BASS (follows chord root) ----
-    if(transition != 4) {
-        -1 => int bDeg;
-        if(variant == 0) bPatA[energy][s] => bDeg;
-        else bPatB[energy][s] => bDeg;
+    // ---- ARRANGEMENT: determine what plays this bar ----
+    0 => int arrLevel;
+    if(motifGenerated) arrangement[phraseBar] => arrLevel;
+    if(energy < 2) { if(arrLevel > 1) 1 => arrLevel; }
 
-        if(energy >= 1 && bDeg >= 0) {
-            // Offset bass degrees by current chord root
+    // ---- BASS (cell-derived, follows arrangement) ----
+    if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
+        bassLine[phraseStep % PHRASE_LEN] => int bDeg;
+        if(bDeg >= 0) {
             (bDeg + chordRoot) % 5 => bDeg;
+            if(bDeg < 0) bDeg + 5 => bDeg;
             2 => int bassOct;
-            if(bOctUp[energy][s] || Math.random2(0, 6) == 0) 3 => bassOct;
+            // Octave jump on bar 3 passing tones
+            if(phraseStep >= 32 && phraseStep < 48 && phraseStep % 2 != 0) 3 => bassOct;
             Std.mtof(note(bDeg, bassOct)) => bassOsc.freq;
-            if(bAcc[energy][s]) {
-                2000.0 + Math.random2f(0.0, 1500.0) => bassFiltTarget;
+            // Filter follows phrase energy: opens up in bar 3
+            if(phraseStep >= 32 && phraseStep < 48) {
+                1500.0 + Math.random2f(0.0, 1000.0) => bassFiltTarget;
             } else {
-                600.0 + Math.random2f(0.0, 800.0) => bassFiltTarget;
+                600.0 + Math.random2f(0.0, 600.0) => bassFiltTarget;
             }
         }
     }
 
-    // ---- PAD (follows chord progression) ----
-    if(energy >= 2 && transition != 4 && s == 0) {
-        // Chord: root, 3rd, 5th relative to current chord root
+    // ---- PAD (follows arrangement + phrase dynamics) ----
+    if(transition != 4 && s == 0 && arrLevel >= 2) {
         chordRoot => int pRoot;
         chordRoot + 2 => int pDeg2;
         chordRoot + 4 => int pDeg3;
         Std.mtof(note(pRoot, 4)) => padOsc1.freq;
         Std.mtof(note(pDeg2, 4)) => padOsc2.freq;
         Std.mtof(note(pDeg3, 4)) => padOsc3.freq;
-        // Slight detune for width
         padOsc1.freq() * 0.998 => padOsc1.freq;
         padOsc3.freq() * 1.002 => padOsc3.freq;
-        0.06 => padGainTarget;
-        if(energy >= 3) 0.09 => padGainTarget;
-        800.0 + Math.random2f(0.0, 600.0) => padFiltTarget;
-    } else if(energy < 2) {
+        // Pad dynamics follow phrase position: swell bars 1-3, pull back bar 4
+        phraseBar % 4 => int barInChord;
+        if(barInChord < 2) 0.04 => padGainTarget;       // bars 1-2: gentle
+        else if(barInChord == 2) 0.08 => padGainTarget;  // bar 3: peak
+        else 0.03 => padGainTarget;                       // bar 4: pull back
+        if(energy >= 3) padGainTarget * 1.3 => padGainTarget;
+        600.0 + barInChord * 150.0 => padFiltTarget;     // filter opens through phrase
+    } else if(arrLevel < 2) {
         0.0 => padGainTarget;
     }
 
-    // ---- LEAD (4-bar motif phrase with velocity) ----
-    if(energy >= 2 && transition != 4 && motifGenerated) {
+    // ---- LEAD (cell motif, follows arrangement) ----
+    if(transition != 4 && motifGenerated && arrLevel >= 3) {
         motif[phraseStep % PHRASE_LEN] => int deg;
         if(deg >= 0) {
-            // Offset by chord root for harmonic movement
             (deg + chordRoot) % 5 => deg;
-            // Bars 3-4 of phrase (steps 32+) go up an octave at energy 3
+            if(deg < 0) deg + 5 => deg;
             4 => int ldOct;
             if(energy >= 3 && phraseStep >= 32) 5 => ldOct;
             Std.mtof(note(deg, ldOct)) => ldOsc1.freq;
-            ldOsc1.freq() * 2.0 => ldOsc2.freq; // octave up
-            // Velocity: on-beat notes louder, off-beat softer
+            ldOsc1.freq() * 2.0 => ldOsc2.freq;
             phraseStep % 16 => int localStep;
             0.04 => float ldVel;
-            if(localStep % 4 == 0) 0.09 => ldVel;      // downbeats: loud
-            else if(localStep % 2 == 0) 0.06 => ldVel;  // on-beats: medium
-            // Phrase contour: bar 3 (development) is loudest
+            if(localStep % 4 == 0) 0.09 => ldVel;
+            else if(localStep % 2 == 0) 0.06 => ldVel;
             if(phraseStep >= 32 && phraseStep < 48) ldVel * 1.2 => ldVel;
-            // Bar 4 (resolution) pulls back
             if(phraseStep >= 48) ldVel * 0.75 => ldVel;
             1200.0 + Math.random2f(0.0, 800.0) => ldFiltTarget;
             ldVel => ldAmpTarget;
         }
+    } else if(arrLevel < 3) {
+        0.0 => ldAmpTarget;
+    }
+
+    // Advance phrase step (shared by bass + lead)
+    if(motifGenerated) {
         phraseStep + 1 => phraseStep;
         if(phraseStep >= PHRASE_LEN) 0 => phraseStep;
     }
