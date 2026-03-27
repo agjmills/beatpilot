@@ -9,6 +9,18 @@ STATE_FILE="/tmp/beatpilot-state"
 # --- Check if disabled ---
 [ -f /tmp/beatpilot-disabled ] && cat > /dev/null && exit 0
 
+# --- Check dependencies ---
+if ! command -v chuck &>/dev/null; then
+    cat > /dev/null
+    echo '{"systemMessage":"Beatpilot: ChucK is not installed. Install it with: brew install chuck (macOS) or sudo apt install chuck (Linux). See https://chuck.cs.princeton.edu/release/"}'
+    exit 0
+fi
+if ! command -v jq &>/dev/null; then
+    cat > /dev/null
+    echo '{"systemMessage":"Beatpilot: jq is not installed. Install it with: brew install jq (macOS) or sudo apt install jq (Linux)."}'
+    exit 0
+fi
+
 # --- Read JSON from stdin ---
 input=$(cat)
 
