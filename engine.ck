@@ -49,8 +49,8 @@ SinOsc kickOsc => Gain kickG => master;
 
 [[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
  [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],
- [1,0,0,0,1,0,0,0,1,0,0,0,1,0,1,0],
- [1,0,1,0,1,0,0,0,1,0,1,0,1,0,0,1]] @=> int kPat[][];
+ [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],
+ [1,0,0,0,1,0,0,0,1,0,0,0,1,0,1,0]] @=> int kPat[][];
 
 // ============ CLOSED HAT ============
 Noise chN => HPF chHP => ADSR chEnv => Gain chG => master;
@@ -60,8 +60,8 @@ chEnv.set(0.3::ms, 22::ms, 0.0, 5::ms);
 
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
- [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],
- [1,0,1,1,1,0,1,0,1,0,1,1,1,0,1,1]] @=> int chPat[][];
+ [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
+ [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0]] @=> int chPat[][];
 
 // ============ OPEN HAT ============
 Noise ohN => BPF ohBP => ADSR ohEnv => Gain ohG => master;
@@ -284,8 +284,6 @@ while(true) {
     } else {
         if(chPat[energy][s]) chEnv.keyOn();
         if(ohPat[energy][s]) ohEnv.keyOn();
-        // Occasional ghost hat for subtle variation (not on every step)
-        if(energy >= 2 && Math.random2(0, 15) == 0 && !chPat[energy][s]) chEnv.keyOn();
     }
 
     // ---- CLAP ----
