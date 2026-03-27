@@ -42,10 +42,16 @@ fun int note(int degree, int octave) {
 }
 
 // ============ KICK ============
-SinOsc kickOsc => Gain kickG => master;
+SinOsc kickOsc => LPF kickLPF => Gain kickG => master;
 0.0 => kickOsc.gain;
-0.40 => kickG.gain;
+300.0 => kickLPF.freq;
+0.35 => kickG.gain;
 0.0 => float kickPh;
+// Click transient for punch
+Noise kickClick => BPF kickClickBP => ADSR kickClickEnv => kickG;
+3500.0 => kickClickBP.freq; 1.5 => kickClickBP.Q;
+kickClickEnv.set(0.2::ms, 8::ms, 0.0, 3::ms);
+0.3 => kickClick.gain;
 
 [[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
  [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],
@@ -260,6 +266,7 @@ while(true) {
         if(s == 0) {
             0.0 => kickPh;
             1.0 => kickOsc.gain;
+            kickClickEnv.keyOn();
         }
     } else if(transition == 4) {
         // BREAKDOWN: filter everything down, thin out
@@ -273,7 +280,8 @@ while(true) {
     // ---- KICK ----
     if(!kickMuted && kPat[energy][s]) {
         0.0 => kickPh;
-        0.9 => kickOsc.gain;
+        0.8 => kickOsc.gain;
+        kickClickEnv.keyOn();
     }
 
     // ---- HATS ----
@@ -325,11 +333,12 @@ while(true) {
 
     // ---- SUBSTEP ENVELOPE UPDATES ----
     for(0 => int sub; sub < SUBSTEPS; sub++) {
-        // Kick pitch envelope
-        if(kickOsc.gain() > 0.01) {
-            42.0 + 140.0 * Math.exp(-kickPh * 14.0) => kickOsc.freq;
-            kickOsc.gain() * 0.92 => kickOsc.gain;
-            kickPh + 0.1 => kickPh;
+        // Kick pitch envelope: deeper, rounder, longer tail
+        if(kickOsc.gain() > 0.005) {
+            38.0 + 80.0 * Math.exp(-kickPh * 8.0) => kickOsc.freq;
+            kickOsc.freq() * 4.0 => kickLPF.freq;
+            kickOsc.gain() * 0.95 => kickOsc.gain;
+            kickPh + 0.08 => kickPh;
         } else {
             0.0 => kickOsc.gain;
         }
