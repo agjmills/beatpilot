@@ -8,9 +8,9 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
-# Kill any remaining engine processes
-pkill -f "chuck.*beatpilot.*\\.ck" 2>/dev/null
+# Kill any remaining chuck processes from this project
 pkill -f "chuck.*genres.*\\.ck" 2>/dev/null
+killall chuck 2>/dev/null
 
 rm -f /tmp/beatpilot-state
 echo "Beatpilot stopped"

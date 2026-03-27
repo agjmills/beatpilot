@@ -10,7 +10,8 @@ if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 
 # Kill any stray engines first
-pkill -f "chuck.*beatpilot.*\\.ck" 2>/dev/null
+pkill -f "chuck.*genres.*\\.ck" 2>/dev/null
+killall chuck 2>/dev/null
 rm -f /tmp/beatpilot-state "$PID_FILE"
 sleep 0.1
 
