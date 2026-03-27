@@ -69,10 +69,10 @@ ohEnv.set(1::ms, 150::ms, 0.03, 100::ms);
 // ============ BASS ============
 // Two pattern banks (selected by seed) x 4 energy levels = 8 patterns
 // Uses octave jumps, syncopation, rests for interest
-SawOsc bassOsc => LPF bassF => Gain bassG => master;
-0.7 => bassOsc.gain;
-200.0 => bassF.freq; 9.0 => bassF.Q;
-0.15 => bassG.gain;
+TriOsc bassOsc => LPF bassF => Gain bassG => master;
+0.6 => bassOsc.gain;
+200.0 => bassF.freq; 4.0 => bassF.Q;
+0.12 => bassG.gain;
 200.0 => float bassFiltTarget;
 
 // Bank A: degree patterns (-1 = rest)
@@ -100,33 +100,16 @@ SawOsc bassOsc => LPF bassF => Gain bassG => master;
  [0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0]] @=> int bOctUp[][];
 
 // ============ LEAD ============
-// Warmer timbre: TriOsc, lower Q, wider intervals, lots of space
+// Generative: probabilistic note selection each step, no fixed pattern
 TriOsc ldOsc1 => LPF ldF => Gain ldG => master;
 TriOsc ldOsc2 => ldF;
-0.5 => ldOsc1.gain; 0.5 => ldOsc2.gain;
-600.0 => ldF.freq; 3.0 => ldF.Q;
+0.4 => ldOsc1.gain; 0.4 => ldOsc2.gain;
+600.0 => ldF.freq; 2.5 => ldF.Q;
 0.0 => ldG.gain;
 600.0 => float ldFiltTarget;
 0.0 => float ldAmpTarget;
 0.0 => float ldAmpCurrent;
-
-// Bank A: sparse, wide intervals (4ths, 5ths, octaves)
-[[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
- [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
- [ 4,-1,-1,-1,-1,-1,-1,-1, 0,-1,-1,-1,-1,-1,-1,-1],
- [-1, 4,-1,-1, 0,-1,-1, 7,-1,-1, 4,-1,-1,-1,-1,-1]] @=> int lPatA[][];
-
-// Bank B: different rhythm, complementary intervals
-[[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
- [-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
- [-1,-1,-1,-1, 7,-1,-1,-1,-1,-1,-1,-1, 5,-1,-1,-1],
- [ 7,-1,-1,-1,-1, 5,-1,-1,-1,-1, 9,-1,-1, 7,-1,-1]] @=> int lPatB[][];
-
-// Lead octave: some notes jump up for sparkle
-[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0]] @=> int lOctUp[][];
+-1 => int lastLeadDeg; // track last note to avoid repeats
 
 // ============ CLAP ============
 Noise clpN => BPF clpBP => ADSR clpEnv => Gain clpG => master;
@@ -213,35 +196,43 @@ while(true) {
     // ---- CLAP ----
     if(clpPat[energy][s]) clpEnv.keyOn();
 
-    // ---- BASS (bank selected by variant) ----
+    // ---- BASS (bank selected by variant, with per-note mutation) ----
     (s + rot) % 16 => int bStep;
     -1 => int bDeg;
     if(variant == 0) bPatA[energy][bStep] => bDeg;
     else bPatB[energy][bStep] => bDeg;
 
     if(energy >= 1 && bDeg >= 0) {
+        // 20% chance to mutate the note to a random scale degree
+        if(Math.random2(0, 4) == 0) Math.random2(0, 4) => bDeg;
         2 => int bassOct;
-        if(bOctUp[energy][bStep]) 3 => bassOct;
+        // Octave up from pattern, or 15% random chance
+        if(bOctUp[energy][bStep] || Math.random2(0, 6) == 0) 3 => bassOct;
         Std.mtof(note(bDeg, bassOct)) => bassOsc.freq;
         if(bAcc[energy][bStep]) {
-            2400.0 + seed * 5.0 => bassFiltTarget;
+            2000.0 + Math.random2f(0.0, 1500.0) => bassFiltTarget;
         } else {
-            800.0 + seed * 3.0 => bassFiltTarget;
+            600.0 + Math.random2f(0.0, 800.0) => bassFiltTarget;
         }
     }
 
-    // ---- LEAD (bank selected by variant, wide intervals) ----
-    -1 => int lDeg;
-    if(variant == 0) lPatA[energy][s] => lDeg;
-    else lPatB[energy][s] => lDeg;
-
-    if(energy >= 2 && lDeg >= 0) {
-        5 => int ldOct;
-        if(lOctUp[energy][s]) 6 => ldOct;
-        Std.mtof(note(lDeg, ldOct)) => ldOsc1.freq;
-        ldOsc1.freq() * 1.003 => ldOsc2.freq;
-        1800.0 + seed * 3.0 => ldFiltTarget;
-        0.09 => ldAmpTarget;
+    // ---- LEAD (probabilistic generation) ----
+    if(energy >= 2) {
+        Math.random2(0, 99) => int roll;
+        // Energy 2: ~12% chance per step, Energy 3: ~25%
+        // Avoid consecutive steps (min 2-step gap sounds more musical)
+        if(((energy == 2 && roll < 12) || (energy == 3 && roll < 25)) && ldAmpTarget < 0.02) {
+            // Pick a degree, but never repeat the same note
+            Math.random2(0, 4) => int deg;
+            if(deg == lastLeadDeg) (deg + Math.random2(1, 3)) % 5 => deg;
+            deg => lastLeadDeg;
+            // Random octave: mostly 4, sometimes 5
+            4 + (Math.random2(0, 3) == 0) => int ldOct;
+            Std.mtof(note(deg, ldOct)) => ldOsc1.freq;
+            ldOsc1.freq() * 1.003 => ldOsc2.freq;
+            1200.0 + Math.random2f(0.0, 1200.0) => ldFiltTarget;
+            0.08 => ldAmpTarget;
+        }
     }
 
     // ---- SUBSTEP ENVELOPE UPDATES ----
