@@ -93,15 +93,40 @@ SawOsc reese2 => reeseFilt;
 0.0 => reeseG.gain;
 800.0 => float reeseFiltTarget;
 
-// ============ PAD ============
+// ============ PAD (3-voice chords) ============
 TriOsc padOsc1 => LPF padFilt => Gain padG => master;
 TriOsc padOsc2 => padFilt;
-0.3 => padOsc1.gain; 0.3 => padOsc2.gain;
-1200.0 => padFilt.freq; 1.0 => padFilt.Q;
+TriOsc padOsc3 => padFilt;
+0.25 => padOsc1.gain; 0.25 => padOsc2.gain; 0.25 => padOsc3.gain;
+1400.0 => padFilt.freq; 0.8 => padFilt.Q;
 0.0 => padG.gain;
 0.0 => float padAmpTarget;
 0.0 => float padAmpCurrent;
--1 => int lastPadDeg;
+-1 => int lastPadRoot;
+
+// ============ LEAD (delayed sine, atmospheric) ============
+SinOsc ldOsc => LPF ldFilt => Gain ldDry => master;
+ldDry => DelayL ldDly => Gain ldWet => master;
+0.5 => ldOsc.gain;
+1800.0 => ldFilt.freq; 1.2 => ldFilt.Q;
+0.0 => ldDry.gain;
+0.35 => ldDly.gain;
+0.38::second => ldDly.max;
+(60.0 / BPM * 0.75)::second => ldDly.delay;  // dotted-eighth delay
+0.0 => ldWet.gain;
+0.0 => float ldAmpTarget;
+0.0 => float ldAmpCurrent;
+1800.0 => float ldFiltTarget;
+-1 => int lastLdDeg;
+
+// ============ STAB (chord hit) ============
+SawOsc stab1 => LPF stabFilt => ADSR stabEnv => Gain stabG => master;
+SawOsc stab2 => stabFilt;
+SawOsc stab3 => stabFilt;
+0.2 => stab1.gain; 0.2 => stab2.gain; 0.2 => stab3.gain;
+2500.0 => stabFilt.freq; 2.0 => stabFilt.Q;
+stabEnv.set(1::ms, 120::ms, 0.0, 60::ms);
+0.0 => stabG.gain;
 
 // ============ RISER ============
 Noise riserN => BPF riserBP => Gain riserG => master;
@@ -147,9 +172,9 @@ fun void readState() {
             0 => barsSinceEvent;
             1.0 => masterTarget;
 
-            if(energy >= 1) { 0.10 => snG.gain; 0.10 => subG.gain; }
-            if(energy >= 2) { 0.06 => reeseG.gain; 0.05 => padG.gain; }
-            else { 0.0 => reeseG.gain; 0.0 => padAmpTarget; }
+            if(energy >= 1) { 0.10 => snG.gain; 0.10 => subG.gain; 0.05 => ldDry.gain; 0.03 => ldWet.gain; }
+            if(energy >= 2) { 0.06 => reeseG.gain; 0.05 => padG.gain; 0.06 => stabG.gain; }
+            else { 0.0 => reeseG.gain; 0.0 => padAmpTarget; 0.0 => stabG.gain; }
         }
     }
 }
@@ -173,8 +198,8 @@ while(true) {
         if(barsSinceEvent > 6 && energy > 0 && transition == 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
-            if(energy < 2) { 0.0 => reeseG.gain; 0.0 => padAmpTarget; }
-            if(energy < 1) { 0.0 => snG.gain; 0.0 => subG.gain; }
+            if(energy < 2) { 0.0 => reeseG.gain; 0.0 => padAmpTarget; 0.0 => stabG.gain; }
+            if(energy < 1) { 0.0 => snG.gain; 0.0 => subG.gain; 0.0 => ldAmpTarget; 0.0 => ldWet.gain; }
         }
         if(barsSinceEvent > 14) 0.0 => masterTarget;
     }
@@ -229,14 +254,39 @@ while(true) {
         1200.0 + Math.random2f(0.0, 800.0) => reeseFiltTarget;
     }
 
-    // ---- PAD (probabilistic) ----
-    if(energy >= 2 && Math.random2(0, 99) < 8 && padAmpCurrent < 0.01) {
-        Math.random2(0, 4) => int deg;
-        if(deg == lastPadDeg) (deg + Math.random2(1, 3)) % 5 => deg;
-        deg => lastPadDeg;
-        Std.mtof(note(deg, 4)) => padOsc1.freq;
-        padOsc1.freq() * 1.002 => padOsc2.freq;
+    // ---- PAD CHORDS (change every 2 bars) ----
+    if(energy >= 2 && s == 0 && stepCount % 32 == 0) {
+        Math.random2(0, 4) => int root;
+        if(root == lastPadRoot) (root + Math.random2(1, 3)) % 5 => root;
+        root => lastPadRoot;
+        Std.mtof(note(root, 3)) => padOsc1.freq;
+        Std.mtof(note(root + 2, 3)) => padOsc2.freq;
+        Std.mtof(note(root + 4, 3)) => padOsc3.freq;
         0.05 => padAmpTarget;
+    }
+
+    // ---- LEAD (melodic, with delay echo) ----
+    if(energy >= 1 && Math.random2(0, 99) < 12 && ldAmpCurrent < 0.008) {
+        [0, 2, 4, 7, 9] @=> int ldDegs[];
+        ldDegs[Math.random2(0, 4)] => int deg;
+        if(deg == lastLdDeg) ldDegs[(Math.random2(0, 4))] => deg;
+        deg => lastLdDeg;
+        4 + Math.random2(0, 1) => int ldOct;
+        Std.mtof(note(deg, ldOct)) => ldOsc.freq;
+        2000.0 + Math.random2f(0.0, 1500.0) => ldFiltTarget;
+        0.05 => ldAmpTarget;
+    }
+
+    // ---- STAB (chord hits on offbeats) ----
+    if(energy >= 2 && transition == 0) {
+        if(s == 2 || s == 10 || (energy >= 3 && s == 6)) {
+            if(lastPadRoot >= 0) {
+                Std.mtof(note(lastPadRoot, 4)) => stab1.freq;
+                Std.mtof(note(lastPadRoot + 2, 4)) => stab2.freq;
+                Std.mtof(note(lastPadRoot + 4, 4)) => stab3.freq;
+                stabEnv.keyOn();
+            }
+        }
     }
 
     // ---- SUBSTEP UPDATES ----
@@ -262,9 +312,19 @@ while(true) {
         reeseFilt.freq() + (reeseFiltTarget - reeseFilt.freq()) * 0.08 => reeseFilt.freq;
         if(reeseFiltTarget > 300.0) reeseFiltTarget * 0.996 => reeseFiltTarget;
 
-        padAmpCurrent + (padAmpTarget - padAmpCurrent) * 0.03 => padAmpCurrent;
+        padAmpCurrent + (padAmpTarget - padAmpCurrent) * 0.008 => padAmpCurrent;
         padAmpCurrent => padG.gain;
-        if(padAmpTarget > 0.005) padAmpTarget * 0.994 => padAmpTarget;
+        if(padAmpTarget > 0.005) padAmpTarget * 0.9985 => padAmpTarget;
+
+        // Lead envelope + filter
+        ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.04 => ldAmpCurrent;
+        ldAmpCurrent => ldDry.gain;
+        if(ldAmpTarget > 0.003) ldAmpTarget * 0.993 => ldAmpTarget;
+        ldFilt.freq() + (ldFiltTarget - ldFilt.freq()) * 0.06 => ldFilt.freq;
+        if(ldFiltTarget > 600.0) ldFiltTarget * 0.997 => ldFiltTarget;
+
+        // Stab filter decay
+        if(stabFilt.freq() > 800.0) stabFilt.freq() * 0.998 => stabFilt.freq;
 
         masterGain + (masterTarget - masterGain) * 0.02 => masterGain;
         masterGain => master.gain;
