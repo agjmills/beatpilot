@@ -54,9 +54,9 @@ snEnv.set(1::ms, 100::ms, 0.02, 60::ms);
  [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0]] @=> int snPat[][];
 
 // ============ HATS (soft, shuffled feel) ============
-Noise chN => HPF chHP => ADSR chEnv => Gain chG => master;
-7000.0 => chHP.freq;
-chEnv.set(0.5::ms, 30::ms, 0.0, 10::ms);
+Noise chN => BPF chBP => ADSR chEnv => Gain chG => master;
+3500.0 => chBP.freq; 1.2 => chBP.Q;
+chEnv.set(0.5::ms, 25::ms, 0.0, 10::ms);
 0.03 => chG.gain;
 
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -78,20 +78,20 @@ SinOsc bassOsc => LPF bassFilt => Gain bassG => master;
  [ 0,-1,-1, 4,-1,-1, 2,-1,-1,-1, 3,-1, 4,-1,-1,-1]] @=> int bPat[][];
 
 // ============ KEYS (warm chords — the lo-fi heart) ============
-TriOsc key1 => LPF keyFilt => Gain keyG => master;
-TriOsc key2 => keyFilt;
-TriOsc key3 => keyFilt;
-0.3 => key1.gain; 0.3 => key2.gain; 0.3 => key3.gain;
-1800.0 => keyFilt.freq; 1.0 => keyFilt.Q;
+SinOsc key1 => LPF keyFilt => Gain keyG => master;
+SinOsc key2 => keyFilt;
+SinOsc key3 => keyFilt;
+SinOsc key4 => keyFilt;  // 7th voice for jazzy color
+0.25 => key1.gain; 0.25 => key2.gain; 0.25 => key3.gain; 0.2 => key4.gain;
+900.0 => keyFilt.freq; 0.7 => keyFilt.Q;
 0.0 => keyG.gain;
 0.0 => float keyAmpTarget;
 0.0 => float keyAmpCurrent;
 -1 => int lastChordRoot;
 
 // ============ VINYL CRACKLE ============
-Noise vinyl => HPF vinylHP => LPF vinylLP => Gain vinylG => master;
-4000.0 => vinylHP.freq;
-8000.0 => vinylLP.freq;
+Noise vinyl => BPF vinylBP => Gain vinylG => master;
+1800.0 => vinylBP.freq; 0.5 => vinylBP.Q;
 0.0 => vinylG.gain;
 
 // ============ STATE FILE READER ============
@@ -118,7 +118,7 @@ fun void readState() {
             0 => barsSinceEvent;
             1.0 => masterTarget;
 
-            if(energy >= 1) { 0.06 => snG.gain; 0.10 => bassG.gain; 0.012 => vinylG.gain; }
+            if(energy >= 1) { 0.06 => snG.gain; 0.10 => bassG.gain; 0.007 => vinylG.gain; }
             if(energy >= 2) { 0.06 => keyG.gain; }
             else { 0.0 => keyAmpTarget; }
         }
@@ -160,14 +160,15 @@ while(true) {
         0.10 => bassAmpTarget;
     }
 
-    // ---- KEYS (chord changes every 2 bars, probabilistic) ----
+    // ---- KEYS (chord changes every 2 bars, jazzy voicings) ----
     if(energy >= 2 && s == 0 && stepCount % 32 == 0) {
         Math.random2(0, 4) => int root;
         if(root == lastChordRoot) (root + Math.random2(1, 3)) % 5 => root;
         root => lastChordRoot;
         Std.mtof(note(root, 3)) => key1.freq;
         Std.mtof(note(root + 2, 3)) => key2.freq;
-        Std.mtof(note(root + 4, 3)) => key3.freq;
+        Std.mtof(note(root + 4, 3)) * 1.002 => key3.freq;  // slight detune
+        Std.mtof(note(root + 6, 3)) => key4.freq;  // add 7th
         0.06 => keyAmpTarget;
     }
 
