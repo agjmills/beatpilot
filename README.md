@@ -56,7 +56,7 @@ This means the same prompt always triggers the same musical response, but differ
 
 ```bash
 # Add the marketplace and install
-/plugin marketplace add your-username/beatpilot
+/plugin marketplace add agjmills/beatpilot
 /plugin install beatpilot
 ```
 
@@ -65,7 +65,7 @@ This registers the hooks automatically and gives you the `/music` slash command 
 ### Option B: Manual install
 
 ```bash
-git clone https://github.com/your-username/beatpilot.git
+git clone https://github.com/agjmills/beatpilot.git
 cd beatpilot
 ./install.sh
 ```
