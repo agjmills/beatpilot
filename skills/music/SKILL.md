@@ -1,7 +1,7 @@
 ---
 name: music
 description: Toggle Beatpilot on or off
-user_invocable: true
+user-invocable: true
 ---
 
 Run the Claude Music toggle script:

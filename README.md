@@ -1,32 +1,41 @@
 # beatpilot
 
-A generative techno soundtrack for your Claude Code sessions, powered by [ChucK](https://chuck.cs.princeton.edu/).
+A generative music soundtrack for your Claude Code sessions, powered by [ChucK](https://chuck.cs.princeton.edu/).
 
 Music plays continuously while Claude works. The groove evolves in real-time — prompts, tool calls, agent spawns, and errors all shape what you hear. Each interaction produces a deterministic hash that influences the key, scale, and pattern, so the same prompt always produces the same musical fingerprint.
 
 This entire project was vibecoded — built with Claude Code in a single session. It exists so you can vibe while you vibe.
 
+## Genres
+
+Switch genres with `/vibe <genre>` inside Claude, or `./vibe.sh <genre>` from the terminal.
+
+| Genre | BPM | Vibe |
+|-------|-----|------|
+| **techno** | 128 | 4/4 kick, acid bass, minimal lead, drops and risers |
+| **dnb** | 174 | Breakbeats, heavy sub bass, reese, atmospheric pads |
+| **lofi** | 85 | Jazzy chords, brushy drums, vinyl crackle, mellow |
+| **ambient** | 70 | No drums, slow drones, shimmering pads, pure texture |
+
 ## How it works
 
 ```
-Claude Code hooks  →  hook.sh  →  state file  →  engine.ck (ChucK)
+Claude Code hooks  →  hook.sh  →  state file  →  genre engine (ChucK)
                                   /tmp/beatpilot-state
 ```
 
-**engine.ck** is a 128 BPM techno sequencer with layered instruments (kick, hats, clap, acid bass, lead synth). It reads a state file once per bar to check for updates.
-
-**hook.sh** is called by Claude Code hooks on every prompt, tool call, and lifecycle event. It hashes the content, derives musical parameters (key, scale, seed), and writes them to the state file.
+Each genre has its own ChucK engine in `genres/`. The engine runs a continuous sequencer that reads a state file once per bar. **hook.sh** is called by Claude Code on every prompt, tool call, and lifecycle event — it hashes the content, derives musical parameters, and writes them to the state file.
 
 ### Energy system
 
 Events control an **energy** level (0–3) that determines which layers play:
 
-| Energy | Layers | Triggered by |
-|--------|--------|-------------|
-| 0 | Silence (fading out) | Errors, prolonged inactivity |
-| 1 | Sparse kick | Stop events, energy decay |
-| 2 | Full groove: kick + hats + bass + clap | Prompts, tool calls |
-| 3 | Intense: driving kicks, busy hats, lead synth | Agent spawns, Bash commands |
+| Energy | Triggered by | Techno | D&B | Lo-fi | Ambient |
+|--------|-------------|--------|-----|-------|---------|
+| 0 | Errors, inactivity | Silence | Silence | Silence | Silence |
+| 1 | Stop, decay | Sparse kick | Kick + snare | Soft kick | Drone |
+| 2 | Prompts, tools | Full groove + bass | + reese + pads | + keys + bass | + pads |
+| 3 | Agents, Bash | + lead + drops | + busy breaks | (same as 2) | + shimmer |
 
 Energy decays over time. If Claude goes idle, the groove strips back and eventually fades to silence.
 
@@ -35,10 +44,18 @@ Energy decays over time. If Claude goes idle, the groove strips back and eventua
 The text content of each event (prompt text, tool name, file paths, command strings) is hashed to produce:
 
 - **Key** (0–11): root note of the groove
-- **Scale** (0–3): major pentatonic, minor pentatonic, major, or minor
-- **Seed** (0–255): selects pattern bank (A/B), rotates percussion, offsets melody degrees
+- **Scale** (0–3): varies per genre (pentatonic, minor, jazzy 7ths, etc.)
+- **Seed** (0–255): selects pattern bank, offsets melody degrees
 
-This means the same prompt always triggers the same musical response, but different prompts sound different.
+Same prompt = same musical fingerprint. Different prompts sound different.
+
+### Transitions
+
+Events can trigger musical transitions:
+
+- **Riser + drop**: energy jumps up → kick drops out, noise sweeps up, hats fill, then everything slams back in with an impact hit
+- **Breakdown**: energy drops → filters sweep down, layers strip away
+- **Impact**: big low sine boom when the drop resolves
 
 ## Prerequisites
 
@@ -50,17 +67,18 @@ This means the same prompt always triggers the same musical response, but differ
   - macOS: `brew install jq`
   - Linux: `sudo apt install jq`
 
+If you install the plugin without ChucK, you'll see a reminder message in Claude prompting you to install it.
+
 ## Installation
 
 ### Option A: Claude Code plugin (recommended)
 
-```bash
-# Add the marketplace and install
+```
 /plugin marketplace add agjmills/beatpilot
 /plugin install beatpilot
 ```
 
-This registers the hooks automatically and gives you the `/music` slash command to toggle on/off.
+This registers the hooks automatically and gives you `/music` (toggle) and `/vibe` (switch genre) commands.
 
 ### Option B: Manual install
 
@@ -84,24 +102,33 @@ This adds hooks to your global `~/.claude/settings.json`. Restart Claude Code to
 
 ## Usage
 
-Once installed, music starts automatically when you begin a Claude session. No action needed.
+Once installed, music starts automatically when you begin a Claude session.
 
 ### Toggle on/off
 
-From within Claude:
 ```
 /music
 ```
 
-From the terminal:
-```bash
-./toggle.sh
+Or from the terminal: `./toggle.sh`
+
+### Switch genre
+
 ```
+/vibe dnb
+/vibe lofi
+/vibe ambient
+/vibe techno
+```
+
+Or from the terminal: `./vibe.sh dnb`
+
+Run `/vibe` or `./vibe.sh` with no argument to list available genres.
 
 ### Manual control
 
 ```bash
-./start.sh    # Start the ChucK engine
+./start.sh    # Start the engine
 ./stop.sh     # Stop the engine
 ```
 
@@ -109,42 +136,52 @@ From the terminal:
 
 ```
 beatpilot/
-├── engine.ck              # Main sequencer — the brain
 ├── hook.sh                # Hook entry point — reads events, writes state
 ├── start.sh               # Start the ChucK engine
-├── stop.sh                # Stop the ChucK engine
+├── stop.sh                # Stop the engine
 ├── toggle.sh              # Toggle music on/off
+├── vibe.sh                # Switch genre
 ├── install.sh             # Manual installer
 ├── uninstall.sh           # Manual uninstaller
+├── genres/
+│   ├── techno.ck          # 128 BPM — kicks, acid bass, drops
+│   ├── dnb.ck             # 174 BPM — breakbeats, reese, pads
+│   ├── lofi.ck            # 85 BPM — jazzy chords, vinyl crackle
+│   └── ambient.ck         # 70 BPM — drones, shimmers, no drums
 ├── .claude-plugin/
 │   ├── plugin.json        # Plugin manifest
 │   └── marketplace.json   # Marketplace definition
 ├── hooks/
 │   └── hooks.json         # Hook config for plugin installs
 └── skills/
-    └── music/
-        └── SKILL.md       # /music slash command
+    ├── music/
+    │   └── SKILL.md       # /music — toggle on/off
+    └── vibe/
+        └── SKILL.md       # /vibe — switch genre
 ```
 
 ## Customization
 
-### Change the tempo
+### Create your own genre
 
-Edit `engine.ck`, line 7:
-```chuck
-128.0 => float BPM;  // change this
+Copy an existing genre file and tweak it:
+
+```bash
+cp genres/techno.ck genres/mygenre.ck
+# Edit BPM, patterns, synth parameters...
+./vibe.sh mygenre
 ```
+
+The engine structure is the same across genres — BPM, patterns, synth routing, and parameter values are what differ.
 
 ### Edit patterns
 
-Patterns are 16-step arrays in `engine.ck`. Each instrument has patterns per energy level (0–3), with two banks (A/B) for bass and lead:
+Patterns are 16-step arrays, one per energy level. Values are scale degrees (`0` = root, `1` = 2nd, etc.), `-1` = rest:
 
 ```chuck
-// Bass bank A, energy 3: acid line with octave jumps
+// Bass pattern, energy 3: acid line with octave jumps
 [ 0,-1, 5,-1, 0,-1,-1, 3, 0,-1,-1, 7, 0,-1, 5,-1]
 ```
-
-Values are scale degrees (`0` = root, `1` = 2nd, etc.), `-1` = rest.
 
 ### Change the energy mapping
 
@@ -159,25 +196,17 @@ case "$event" in
 esac
 ```
 
-### Add new instruments
-
-Add oscillators and pattern arrays in `engine.ck` following the existing pattern. Route through `master` for volume control:
-
-```chuck
-SinOsc myOsc => Gain myG => master;
-```
-
 ## How the audio works
 
-The engine uses ChucK's real-time audio synthesis:
+Everything is synthesized in real-time by ChucK. No samples or external dependencies.
 
-- **Kick**: SinOsc with rapid pitch decay (180Hz → 42Hz) — classic 808 technique
-- **Hats**: Noise through high-pass and band-pass filters with short ADSR envelopes
-- **Clap**: Noise through a band-pass with medium decay
-- **Bass**: SawOsc through resonant LPF (Q=9) with per-note filter envelope — acid squelch
-- **Lead**: TriOsc (warm) through LPF (Q=3), sparse wide intervals to avoid siren effect
-
-All sounds are synthesized in real-time. No samples or external dependencies beyond ChucK itself.
+- **Kick**: SinOsc with rapid pitch decay through LPF + noise click transient
+- **Hats**: Noise through high-pass filters with short ADSR envelopes
+- **Clap/Snare**: Noise through band-pass with shaped decay
+- **Bass**: TriOsc through resonant LPF with per-note filter envelope
+- **Lead**: TriOsc (probabilistic generation — random notes each bar, never repeats)
+- **Pads/Keys**: Layered TriOsc/SinOsc with slow amplitude envelopes
+- **Transitions**: Noise riser sweep + SinOsc impact boom
 
 ## License
 
