@@ -185,9 +185,58 @@ Skills in `~/.claude/skills/` are available in all sessions automatically.
 
 This registers the hooks and skills automatically.
 
+## Using with Other AI Tools (Copilot, Cursor, Codex, Aider, etc.)
+
+Beatpilot works with **any** coding tool via the file watcher adapter. The genre engines just read a state file — they don't care what writes it.
+
+### File watcher (universal — works with anything)
+
+```bash
+# Start watching your project directory
+/path/to/beatpilot/adapters/filewatcher.sh /path/to/your/project
+
+# Stop watching
+/path/to/beatpilot/adapters/filewatcher.sh --stop
+```
+
+The watcher monitors file changes and maps activity frequency to energy levels. Uses `fswatch` if installed (event-driven, efficient), otherwise polls with `find` every 3 seconds.
+
+Add to your shell profile to auto-start with any project:
+```bash
+# ~/.zshrc or ~/.bashrc
+beatpilot-watch() { /path/to/beatpilot/adapters/filewatcher.sh "${1:-.}"; }
+```
+
+### Direct state control (for custom integrations)
+
+```bash
+# Write state directly: write-state.sh <energy 0-3> [content for variation]
+/path/to/beatpilot/adapters/write-state.sh 2 "editing main.py"
+/path/to/beatpilot/adapters/write-state.sh 3 "running tests"
+/path/to/beatpilot/adapters/write-state.sh 0 "build failed"
+```
+
+This is the building block for writing your own adapter for any tool.
+
+## Adapter Architecture
+
+```
+adapters/
+  write-state.sh    — shared core: hashes content → key/scale/seed, writes state
+  claude-code.sh    — Claude Code adapter (receives hook JSON on stdin)
+  filewatcher.sh    — universal adapter (watches filesystem for changes)
+hook.sh             — thin wrapper → adapters/claude-code.sh (backwards compat)
+```
+
+All adapters call `write-state.sh`, which handles:
+- MD5 hashing of content into musical parameters (key, scale, seed)
+- Atomic state file writes to `/tmp/beatpilot-state`
+- Auto-starting the ChucK engine if not running
+
 ## File Structure
 - `genres/*.ck` — genre engines (one per genre)
-- `hook.sh` — event handler, writes state file
+- `adapters/` — client adapters (Claude Code, file watcher, write-state core)
+- `hook.sh` — Claude Code hook entry point (forwards to adapter)
 - `start.sh` / `stop.sh` / `toggle.sh` — engine lifecycle
 - `vibe.sh` — genre switcher
 - `volume.sh` — volume control (0-100)
