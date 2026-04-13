@@ -354,132 +354,21 @@ while(true) {
         }
 
         // Energy decay
-        if(barsSinceEvent > 10 && energy > 0 && !autoActive) {
+        if(barsSinceEvent > 10 && energy > 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
         }
 
-        // Auto-evolution instead of silence
-        if(barsSinceEvent > 12 && !autoActive) {
-            1 => autoActive;
-            1 => autoSection;
-            0 => autoSectionBar;
-            1 => energy;
-            1.0 => masterTarget;
-        }
-
-        if(autoActive) {
-            autoSectionBar + 1 => autoSectionBar;
-            1.0 => masterTarget;
-
-            if(autoSectionBar >= autoSectionLen[autoSection]) {
-                0 => autoSectionBar;
-                autoNextSection[autoSection] => autoSection;
-
-                if(autoSection == 1) {
-                    // Thin: just drone + sub, everything else fades
-                    0 => energy;
-                    0.07 => droneAmpTarget;
-                    0.06 => subAmpTarget;
-                    0.0 => padAmpTarget;
-                    0.0 => shimAmpTarget;
-                    0.0 => arpAmpTarget;
-                    0.0 => texAmpTarget;
-                    0.0 => rumbleAmpTarget;
-                } else if(autoSection == 2) {
-                    // Swell: pad comes in slowly, texture breathes
-                    1 => energy;
-                    0.04 => padAmpTarget;
-                    0.006 => texAmpTarget;
-                    0.02 => arpAmpTarget;
-                } else if(autoSection == 3) {
-                    // Shimmer focus: high cluster + arp, pad sustains
-                    2 => energy;
-                    0.04 => shimAmpTarget;
-                    0.03 => arpAmpTarget;
-                    0.05 => padAmpTarget;
-                    0.01 => texAmpTarget;
-                    0.0 => rumbleAmpTarget;
-                } else if(autoSection == 4) {
-                    // Full return: warm resolution after tension
-                    2 => energy;
-                    // Shift to a warm scale for the release
-                    seed % 2 => scaleType;
-                    seed % 2 => progIdx;  // warm progression
-                    0.07 => droneAmpTarget;
-                    0.05 => padAmpTarget;
-                    0.03 => shimAmpTarget;
-                    0.03 => arpAmpTarget;
-                    0.0 => rumbleAmpTarget;
-                } else if(autoSection == 5) {
-                    // TENSION: dark mode — drone drops, rumble builds,
-                    // switch to dark scale, dissonant intervals
-                    1 => mood;
-                    2 + (seed % 4) => scaleType;  // harmonic minor/phrygian/etc
-                    2 + (seed % 4) => progIdx;     // dark progression
-                    0 => phraseBar;
-                    1 => energy;
-                    // Drone drops an octave, gets louder
-                    Std.mtof(note(0, 1)) => droneCarr.freq;
-                    droneCarr.freq() * 1.5 => droneMod.freq;
-                    droneCarr.freq() * 0.998 => droneWarm1.freq;
-                    droneCarr.freq() * 1.002 => droneWarm2.freq;
-                    0.09 => droneAmpTarget;
-                    0.07 => subAmpTarget;
-                    // Rumble builds
-                    0.04 => rumbleAmpTarget;
-                    // Noise texture swells
-                    0.015 => texAmpTarget;
-                    // Pad goes dissonant — tritone interval
-                    Std.mtof(note(0, 3)) => float t1;
-                    Std.mtof(note(3, 3)) => float t2;  // tritone in phrygian
-                    Std.mtof(note(1, 3)) => float t3;  // minor 2nd
-                    t1 * 0.997 => pad1a.freq; t1 * 1.003 => pad1b.freq;
-                    t2 * 0.997 => pad2a.freq; t2 * 1.003 => pad2b.freq;
-                    t3 * 0.998 => pad3a.freq; t3 * 1.002 => pad3b.freq;
-                    0.03 => padAmpTarget;
-                    600.0 => padFiltTarget;  // darker filter
-                    0.0 => shimAmpTarget;
-                    0.0 => arpAmpTarget;
-                } else if(autoSection == 6) {
-                    // RELEASE: tension resolves, warm wash
-                    0 => mood;
-                    seed % 2 => scaleType;
-                    seed % 2 => progIdx;
-                    0 => phraseBar;
-                    2 => energy;
-                    // Drone back up
-                    Std.mtof(note(0, 2)) => droneCarr.freq;
-                    droneCarr.freq() * 1.5 => droneMod.freq;
-                    droneCarr.freq() * 0.998 => droneWarm1.freq;
-                    droneCarr.freq() * 1.002 => droneWarm2.freq;
-                    0.06 => droneAmpTarget;
-                    0.05 => subAmpTarget;
-                    0.0 => rumbleAmpTarget;
-                    0.05 => padAmpTarget;
-                    1400.0 => padFiltTarget;
-                    0.03 => shimAmpTarget;
-                    0.02 => arpAmpTarget;
-                    0.005 => texAmpTarget;
-                } else {
-                    // Normal: cycle restarts
-                    1 => energy;
-                    0.0 => rumbleAmpTarget;
-                }
-            }
+        // Fade out when idle — no auto-evolution, just graceful silence
+        if(barsSinceEvent > 12 && energy == 0) {
+            0.0 => masterTarget;
         }
     }
 
     // ---- DRONE PITCH: follow chord root smoothly ----
     if(s == 0 && energy >= 0) {
-        // During tension sections, drone stays on low root — ominous pedal tone
-        if(autoActive && autoSection == 5) {
-            Std.mtof(note(0, 1)) => float drTarget;
-            droneCarr.freq() + (drTarget - droneCarr.freq()) * 0.02 => droneCarr.freq;
-        } else {
-            Std.mtof(note(chordRoot, 2)) => float drTarget;
-            droneCarr.freq() + (drTarget - droneCarr.freq()) * 0.05 => droneCarr.freq;
-        }
+        Std.mtof(note(chordRoot, 2)) => float drTarget;
+        droneCarr.freq() + (drTarget - droneCarr.freq()) * 0.05 => droneCarr.freq;
         droneCarr.freq() * 1.5 => droneMod.freq;
         droneCarr.freq() * 0.998 => droneWarm1.freq;
         droneCarr.freq() * 1.002 => droneWarm2.freq;

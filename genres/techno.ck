@@ -22,6 +22,7 @@
 0.0 => float masterTarget;
 0.8 => float volume;
 0 => int variant;
+0 => int drumFill;
 
 // ============ PHRASE / SONG STRUCTURE ============
 // Chord progression: 4 chords, each lasts 4 bars = 16-bar phrase
@@ -415,7 +416,7 @@ while(true) {
         progs[progIdx][chordIdx] => chordRoot;
 
         // Energy decay — but trigger auto-evolution instead of silence
-        if(barsSinceEvent > 6 && energy > 0 && transition == 0 && !autoActive) {
+        if(barsSinceEvent > 6 && energy > 0 && transition == 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
             if(energy < 2) {
@@ -424,59 +425,16 @@ while(true) {
             }
         }
 
-        // Auto-evolution: kick in after sustained idle instead of fading out
-        if(barsSinceEvent > 10 && !autoActive && transition == 0) {
-            1 => autoActive;
-            1 => autoSection;       // start with breakdown
-            0 => autoSectionBar;
-            2 => energy;            // keep energy alive
-            1.0 => masterTarget;
+        // Fade out when idle — no auto-evolution, just graceful silence
+        if(barsSinceEvent > 10 && energy == 0 && transition == 0) {
+            0.0 => masterTarget;
         }
 
-        // Advance auto-evolution sections
-        if(autoActive) {
-            autoSectionBar + 1 => autoSectionBar;
-            1.0 => masterTarget;    // never fade to silence during auto
-
-            if(autoSectionBar >= autoSectionLen[autoSection]) {
-                0 => autoSectionBar;
-                autoNextSection[autoSection] => autoSection;
-
-                // Section entry logic
-                if(autoSection == 1) {
-                    // Breakdown: strip to pad + sparse hats
-                    1 => energy;
-                    0.0 => ldAmpTarget;
-                    0.0 => clpG.gain;
-                    0.06 => padGainTarget;
-                    300.0 => bassFiltTarget;
-                } else if(autoSection == 2) {
-                    // Ambient: pad only, regenerate motif for freshness
-                    1 => energy;
-                    0.08 => padGainTarget;
-                    1000.0 => padFiltTarget;
-                    generateMotif();
-                } else if(autoSection == 3) {
-                    // Build: riser + hats fill, energy rises
-                    2 => energy;
-                    2 => transition;
-                    4 => transitionBars;
-                    0 => transitionStep;
-                } else if(autoSection == 4) {
-                    // Drop: everything back, impact
-                    3 => energy;
-                    3 => transition;
-                    1 => transitionBars;
-                    0.09 => ldDry.gain;
-                    0.08 => clpG.gain;
-                    0.09 => padGainTarget;
-                } else {
-                    // Section 0: normal groove, cycle restarts
-                    2 => energy;
-                    0.09 => ldDry.gain;
-                    0.08 => clpG.gain;
-                }
-            }
+        // Drum fill at phrase boundaries
+        0 => drumFill;
+        if(energy >= 1 && motifGenerated) {
+            if(phraseBar == 15) 2 => drumFill;
+            else if(phraseBar % 4 == 3) 1 => drumFill;
         }
     }
 
@@ -486,23 +444,6 @@ while(true) {
     0 => int kickMuted;
     0 => int hatFill;
 
-    // Auto-evolution section overrides
-    if(autoActive) {
-        if(autoSection == 1) {
-            // Breakdown: kill kick, sparse hats only
-            1 => kickMuted;
-            200.0 + Math.sin(stepCount * 0.01) * 100.0 => bassFiltTarget;
-        } else if(autoSection == 2) {
-            // Ambient: no kick, no hats, just pad breathing
-            1 => kickMuted;
-            0.0 => chG.gain;
-        } else if(autoSection == 3) {
-            // Build: hats fill in final 2 bars
-            if(autoSectionBar >= 2) 1 => hatFill;
-        }
-        // Section 4 (drop) and 0 (normal) use default behavior
-        if(autoSection != 2) 0.07 => chG.gain;
-    }
 
     if(transition == 2) {
         // DROP: kill kick, riser sweeps up, hats do fill in last bar
@@ -567,6 +508,34 @@ while(true) {
 
     // ---- CLAP ----
     if(clpPat[energy][s]) clpEnv.keyOn();
+
+    // ---- DRUM FILL (builds at phrase boundaries) ----
+    if(drumFill > 0 && energy >= 1) {
+        if(drumFill == 2) {
+            // Big fill (end of 16-bar phrase): hat + clap roll builds through bar
+            if(s >= 2 && !chPat[energy][s]) {
+                0.03 + (s $ float) / 16.0 * 0.06 => chG.gain;
+                chEnv.keyOn();
+            }
+            if(s >= 8 && s % 2 == 0) {
+                0.04 + (s $ float) / 16.0 * 0.04 => clpG.gain;
+                clpEnv.keyOn();
+            }
+            if(s >= 12) {
+                0.03 + (s - 12) / 4.0 * 0.04 => ohG.gain;
+                ohEnv.keyOn();
+            }
+        } else {
+            // Small fill (end of 4-bar chord): hat flurry in last quarter
+            if(s >= 12 && !chPat[energy][s]) {
+                0.04 + (s - 12) / 4.0 * 0.05 => chG.gain;
+                chEnv.keyOn();
+            }
+            if(s == 14) {
+                clpEnv.keyOn();
+            }
+        }
+    }
 
     // ---- ARRANGEMENT: determine what plays this bar ----
     0 => int arrLevel;

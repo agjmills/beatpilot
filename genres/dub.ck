@@ -22,6 +22,7 @@
 0.0 => float masterTarget;
 0.8 => float volume;
 0 => int variant;
+0 => int drumFill;
 
 // ============ PHRASE / SONG STRUCTURE ============
 // Chord progression: 4 chords, each lasts 4 bars = 16-bar phrase
@@ -485,7 +486,7 @@ while(true) {
         progs[progIdx][chordIdx] => chordRoot;
 
         // Energy decay
-        if(barsSinceEvent > 6 && energy > 0 && transition == 0 && !autoActive) {
+        if(barsSinceEvent > 6 && energy > 0 && transition == 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
             if(energy < 2) {
@@ -495,66 +496,16 @@ while(true) {
             }
         }
 
-        // Auto-evolution: dub-specific sections
-        if(barsSinceEvent > 10 && !autoActive && transition == 0) {
-            1 => autoActive;
-            1 => autoSection;
-            0 => autoSectionBar;
-            2 => energy;
-            1.0 => masterTarget;
+        // Fade out when idle — no auto-evolution, just graceful silence
+        if(barsSinceEvent > 10 && energy == 0 && transition == 0) {
+            0.0 => masterTarget;
         }
 
-        // Advance auto-evolution sections
-        if(autoActive) {
-            autoSectionBar + 1 => autoSectionBar;
-            1.0 => masterTarget;
-
-            if(autoSectionBar >= autoSectionLen[autoSection]) {
-                0 => autoSectionBar;
-                autoNextSection[autoSection] => autoSection;
-
-                if(autoSection == 1) {
-                    // Strip to bass + delay echoes — THE dub sound
-                    1 => energy;
-                    0.0 => ldAmpTarget;
-                    0.0 => snrG.gain;
-                    0.0 => skankG.gain;
-                    0.04 => padGainTarget;
-                    // Boost delay wet — the echoes fill the space
-                    0.09 => dlyWetTarget;
-                    80.0 => bassFiltTarget;
-                } else if(autoSection == 2) {
-                    // Drums return with delay throws
-                    2 => energy;
-                    0.07 => snrG.gain;
-                    0.08 => dlyWetTarget;
-                    generateMotif();
-                } else if(autoSection == 3) {
-                    // Build: riser + everything intensifies
-                    2 => energy;
-                    2 => transition;
-                    4 => transitionBars;
-                    0 => transitionStep;
-                    0.07 => dlyWetTarget;
-                } else if(autoSection == 4) {
-                    // Full drop — everything back
-                    3 => energy;
-                    3 => transition;
-                    1 => transitionBars;
-                    0.07 => ldDry.gain;
-                    0.07 => snrG.gain;
-                    0.15 => skankG.gain;
-                    0.08 => padGainTarget;
-                    0.06 => dlyWetTarget;
-                } else {
-                    // Section 0: normal groove, restart cycle
-                    2 => energy;
-                    0.07 => ldDry.gain;
-                    0.07 => snrG.gain;
-                    0.15 => skankG.gain;
-                    0.06 => dlyWetTarget;
-                }
-            }
+        // Drum fill at phrase boundaries
+        0 => drumFill;
+        if(energy >= 1 && motifGenerated) {
+            if(phraseBar == 15) 2 => drumFill;
+            else if(phraseBar % 4 == 3) 1 => drumFill;
         }
     }
 
@@ -563,24 +514,6 @@ while(true) {
 
     0 => int kickMuted;
     0 => int hatFill;
-
-    // Auto-evolution section overrides
-    if(autoActive) {
-        if(autoSection == 1) {
-            // Strip: kill drums, just bass + delay echoes filling space
-            1 => kickMuted;
-            80.0 + Math.sin(stepCount * 0.008) * 40.0 => bassFiltTarget;
-            // Delay wet swells — the echoes ARE the music
-            0.08 + Math.sin(stepCount * 0.005) * 0.02 => dlyWetTarget;
-        } else if(autoSection == 2) {
-            // Drums return with delay throws — occasional snare hits into delay
-            0.5 => snrToDelay.gain; // heavy delay send on snare
-        } else if(autoSection == 3) {
-            // Build: hats fill in final 2 bars
-            if(autoSectionBar >= 4) 1 => hatFill;
-        }
-        if(autoSection != 1) 0.06 => chG.gain;
-    }
 
     if(transition == 2) {
         // DROP: kill kick, riser sweeps up
@@ -654,6 +587,31 @@ while(true) {
         }
         // Snare feeds reverb
         // snare echo handled by dub delay throw
+    }
+
+    // ---- DRUM FILL (rimshot rolls into delay at phrase boundaries) ----
+    if(drumFill > 0 && energy >= 1) {
+        if(drumFill == 2) {
+            // Big fill (end of 16-bar phrase): snare roll into delay — echoes become the fill
+            if(s >= 6 && s % 2 == 0 && !snrPat[energy][s]) {
+                0.03 + (s $ float) / 16.0 * 0.05 => snrG.gain;
+                snrEnv.keyOn();
+                // Throw every fill hit into delay for cascading echoes
+                0.5 => snrToDelay.gain;
+            }
+            // Open hat accents on 10, 14
+            if(s == 10 || s == 14) {
+                0.04 => ohG.gain;
+                ohEnv.keyOn();
+            }
+        } else {
+            // Small fill (end of 4-bar chord): rimshot tap on step 12, thrown into delay
+            if(s == 12 && !snrPat[energy][s]) {
+                0.04 => snrG.gain;
+                snrEnv.keyOn();
+                0.4 => snrToDelay.gain;
+            }
+        }
     }
 
     // ---- ARRANGEMENT: determine what plays this bar ----

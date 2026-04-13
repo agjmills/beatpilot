@@ -57,13 +57,20 @@ Every hit at the same volume = lifeless. Add:
 - Lead phrase contour: bar 3 peaks, bar 4 pulls back
 - Hat fills should crescendo
 
-### 7. Auto-evolution (idle sections)
-Never decay to silence. When Claude is working on a long task (10+ bars idle):
-- Enter auto-evolution cycle instead of fading out
-- Genre-appropriate sections (e.g., breakdown → ambient → build → drop for techno)
-- Keep `masterTarget` at 1.0 during auto — the music should always be playing
-- A real event from Claude cancels auto-evolution immediately
-- Regenerate motif between sections for freshness
+### 7. Idle behavior — graceful fadeout
+When Claude is idle for a long time (10+ bars with no events):
+- Energy decays naturally through the existing decay mechanism
+- Once energy reaches 0, `masterTarget` fades to 0.0 — the music fades out gracefully
+- A new event from Claude immediately sets `masterTarget` back to 1.0 and resets energy
+- No auto-evolution cycles — silence is preferable to aimless noodling
+
+### 7b. Drum fills at phrase boundaries
+Fills give the track rhythmic punctuation and make it feel composed, not looped:
+- **Small fill** every 4 bars (`phraseBar % 4 == 3`): subtle — a few extra ghost hits in the last quarter of the bar
+- **Big fill** every 16 bars (`phraseBar == 15`): builds through the bar — snare/hat rolls with crescendo velocity
+- Only play fills when `energy >= 1` and motif is generated
+- Fill hits should only fire where normal patterns are silent (don't double-trigger)
+- Genre character: lofi = brush flurries, techno = hat+clap rolls, DnB = breakbeat snare rolls, dub = rimshot into delay
 
 ### 8. Bass derived from the cell, not fixed patterns
 The bass line must share DNA with the lead — both come from the same cell. Fixed pattern arrays (`bPatA[][]`) sound disconnected, like a preset backing track under a solo.
@@ -133,10 +140,11 @@ Read once per bar (step 0). Only act on new timestamps.
 7. Build bass line in the same generator, derived from the cell intervals
 8. Build arrangement mask (16 bars, 3 templates based on seed)
 9. Wire everything through the reverb bus
-10. Add auto-evolution cycle with genre-appropriate sections
-11. Add velocity maps for all drums
-12. Ensure pad/keys dynamics follow the 4-bar phrase arc (swell → peak → pull back)
-13. Test: does it sound like a composed piece or a tech demo? Check:
+10. Add drum fill logic (small fill every 4 bars, big fill every 16 bars)
+11. Add idle fadeout (`masterTarget` → 0.0 when energy == 0 and idle > threshold)
+12. Add velocity maps for all drums
+13. Ensure pad/keys dynamics follow the 4-bar phrase arc (swell → peak → pull back)
+14. Test: does it sound like a composed piece or a tech demo? Check:
     - Do bass and lead share the same intervals? (principle 8)
     - Do layers come and go, or is everything on from bar 1? (principle 9)
     - Does the pad breathe, or is it a static drone? (principle 10)

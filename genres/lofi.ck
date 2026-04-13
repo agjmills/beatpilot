@@ -19,6 +19,7 @@
 0.0 => float masterTarget;
 0.8 => float volume;
 0 => int variant;
+0 => int drumFill;
 
 // ============ PHRASE / CHORD PROGRESSION ============
 // Jazzy progressions: ii-V-I-vi, I-vi-ii-V, etc.
@@ -352,7 +353,7 @@ while(true) {
         progs[progIdx][chordIdx] => chordRoot;
 
         // Energy decay
-        if(barsSinceEvent > 8 && energy > 0 && !autoActive) {
+        if(barsSinceEvent > 8 && energy > 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
             if(energy < 2) 0.0 => keyAmpTarget;
@@ -364,52 +365,16 @@ while(true) {
             }
         }
 
-        // Auto-evolution
-        if(barsSinceEvent > 10 && !autoActive) {
-            1 => autoActive;
-            1 => autoSection;
-            0 => autoSectionBar;
-            2 => energy;
-            1.0 => masterTarget;
+        // Fade out when idle — no auto-evolution, just graceful silence
+        if(barsSinceEvent > 10 && energy == 0) {
+            0.0 => masterTarget;
         }
 
-        if(autoActive) {
-            autoSectionBar + 1 => autoSectionBar;
-            1.0 => masterTarget;
-
-            if(autoSectionBar >= autoSectionLen[autoSection]) {
-                0 => autoSectionBar;
-                autoNextSection[autoSection] => autoSection;
-
-                if(autoSection == 1) {
-                    // Strip back: just bass + vinyl + keys fading
-                    1 => energy;
-                    0.0 => snG.gain;
-                    0.08 => bassG.gain;
-                    0.008 => vinylG.gain;
-                    0.02 => keyAmpTarget;
-                    0.0 => ldAmpTarget;
-                } else if(autoSection == 2) {
-                    // Rebuild: drums come in, keys swell
-                    2 => energy;
-                    0.05 => snG.gain;
-                    0.10 => bassG.gain;
-                    0.05 => keyAmpTarget;
-                    generateMotif();
-                } else if(autoSection == 3) {
-                    // Full: everything, lead comes in
-                    2 => energy;
-                    0.06 => snG.gain;
-                    0.05 => keyAmpTarget;
-                } else if(autoSection == 4) {
-                    // Swell moment
-                    2 => energy;
-                    0.06 => keyAmpTarget;
-                    1200.0 => keyFiltTarget;
-                } else {
-                    2 => energy;
-                }
-            }
+        // Drum fill at phrase boundaries
+        0 => drumFill;
+        if(energy >= 1 && motifGenerated) {
+            if(phraseBar == 15) 2 => drumFill;
+            else if(phraseBar % 4 == 3) 1 => drumFill;
         }
     }
 
@@ -432,6 +397,27 @@ while(true) {
     if(chPat[energy][s]) {
         0.015 + 0.025 * hatVel[s] => chG.gain;
         chEnv.keyOn();
+    }
+
+    // ---- DRUM FILL (brush rolls at phrase boundaries) ----
+    if(drumFill > 0 && energy >= 1) {
+        if(drumFill == 2) {
+            // Big fill (end of 16-bar phrase): brush roll builds through bar
+            if(s >= 4 && s % 2 == 0 && !snPat[energy][s] && !snGhost[energy][s]) {
+                0.02 + (s $ float) / 16.0 * 0.04 => snG.gain;
+                snEnv.keyOn();
+            }
+            if(s >= 8 && !chPat[energy][s]) {
+                0.01 + (s $ float) / 16.0 * 0.02 => chG.gain;
+                chEnv.keyOn();
+            }
+        } else {
+            // Small fill (end of 4-bar chord): ghost brush flurry in last quarter
+            if(s >= 12 && s % 2 == 0 && !snPat[energy][s] && !snGhost[energy][s]) {
+                0.02 + (s - 12) / 8.0 * 0.02 => snG.gain;
+                snEnv.keyOn();
+            }
+        }
     }
 
     // ---- ARRANGEMENT: determine what plays this bar ----

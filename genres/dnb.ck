@@ -19,6 +19,7 @@
 0.0 => float masterTarget;
 0.8 => float volume;
 0 => int variant;
+0 => int drumFill;
 
 // ============ PHRASE / CHORD PROGRESSION ============
 [[0, 3, 4, 2], [0, 4, 3, 1], [0, 3, 5, 2], [0, 4, 1, 3], [0, 5, 3, 1]] @=> int progs[][];
@@ -412,7 +413,7 @@ while(true) {
         progs[progIdx][chordIdx] => chordRoot;
 
         // Energy decay
-        if(barsSinceEvent > 6 && energy > 0 && transition == 0 && !autoActive) {
+        if(barsSinceEvent > 6 && energy > 0 && transition == 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
             if(energy < 2) {
@@ -427,60 +428,16 @@ while(true) {
             }
         }
 
-        // Auto-evolution instead of silence
-        if(barsSinceEvent > 10 && !autoActive && transition == 0) {
-            1 => autoActive;
-            1 => autoSection;
-            0 => autoSectionBar;
-            2 => energy;
-            1.0 => masterTarget;
+        // Fade out when idle — no auto-evolution, just graceful silence
+        if(barsSinceEvent > 10 && energy == 0 && transition == 0) {
+            0.0 => masterTarget;
         }
 
-        if(autoActive) {
-            autoSectionBar + 1 => autoSectionBar;
-            1.0 => masterTarget;
-
-            if(autoSectionBar >= autoSectionLen[autoSection]) {
-                0 => autoSectionBar;
-                autoNextSection[autoSection] => autoSection;
-
-                if(autoSection == 1) {
-                    // Breakdown: strip to halftime, pad + sub only
-                    1 => energy;
-                    0.0 => reeseG.gain;
-                    0.0 => stabG.gain;
-                    0.0 => ldAmpTarget;
-                    0.04 => padAmpTarget;
-                    0.08 => subG.gain;
-                    0.08 => snG.gain;
-                } else if(autoSection == 2) {
-                    // Build: reese comes in, hats intensify
-                    2 => energy;
-                    0.05 => reeseG.gain;
-                    0.05 => padAmpTarget;
-                    0.10 => snG.gain;
-                    generateMotif();
-                } else if(autoSection == 3) {
-                    // Riser into drop
-                    3 => energy;
-                    2 => transition;
-                    4 => transitionBars;
-                    0 => transitionStep;
-                } else if(autoSection == 4) {
-                    // Drop: full energy slam
-                    3 => energy;
-                    3 => transition;
-                    1 => transitionBars;
-                    0.06 => reeseG.gain;
-                    0.06 => stabG.gain;
-                    0.10 => snG.gain;
-                    0.05 => padAmpTarget;
-                } else {
-                    2 => energy;
-                    0.10 => snG.gain;
-                    0.06 => reeseG.gain;
-                }
-            }
+        // Drum fill at phrase boundaries
+        0 => drumFill;
+        if(energy >= 1 && motifGenerated) {
+            if(phraseBar == 15) 2 => drumFill;
+            else if(phraseBar % 4 == 3) 1 => drumFill;
         }
     }
 
@@ -488,15 +445,6 @@ while(true) {
     transitionStep + 1 => transitionStep;
     0 => int kickMuted;
     0 => int hatFill;
-
-    // Auto-evolution overrides
-    if(autoActive) {
-        if(autoSection == 1) {
-            // Breakdown: halftime feel — only kick on 1, snare on 9
-            if(s != 0) 1 => kickMuted;
-        }
-        if(autoSection != 1) 0.05 => chG.gain;
-    }
 
     if(transition == 2) {
         1 => kickMuted;
@@ -557,6 +505,35 @@ while(true) {
         if(ohPat[energy][s]) {
             0.02 + 0.04 * hatVel[s] => ohG.gain;
             ohEnv.keyOn();
+        }
+    }
+
+    // ---- DRUM FILL (breakbeat rolls at phrase boundaries) ----
+    if(drumFill > 0 && energy >= 1) {
+        if(drumFill == 2) {
+            // Big fill (end of 16-bar phrase): classic breakbeat snare roll
+            if(s >= 4 && s % 2 == 0 && !snHit && !snGhost[energy][s]) {
+                0.04 + (s $ float) / 16.0 * 0.06 => snG.gain;
+                snEnv.keyOn();
+            }
+            // Rapid-fire hats in second half
+            if(s >= 8 && !hatFill) {
+                0.02 + (s $ float) / 16.0 * 0.04 => chG.gain;
+                chEnv.keyOn();
+            }
+            // Ghost kick on 10, 14 for extra momentum
+            if((s == 10 || s == 14) && !kickMuted) {
+                0.0 => kickPh;
+                0.4 => kickOsc.gain;
+                0.15 => kickClick.gain;
+                kickClickEnv.keyOn();
+            }
+        } else {
+            // Small fill (end of 4-bar chord): snare ghosts in last quarter
+            if(s >= 12 && s % 2 == 0 && !snHit && !snGhost[energy][s]) {
+                0.035 => snG.gain;
+                snEnv.keyOn();
+            }
         }
     }
 
