@@ -24,6 +24,16 @@
 0 => int variant;
 0 => int drumFill;
 
+// ============ FX STATE (occasional tension/release) ============
+0 => int fxType;  // 0=none, 1=hpf_sweep, 2=reverb_wash, 3=delay_swell
+0 => int fxBar;
+0 => int fxLen;
+
+// ============ INTRO STATE (call to the dancefloor) ============
+0 => int introActive;
+0 => int introBar;
+0 => int introLen;
+
 // ============ PHRASE / SONG STRUCTURE ============
 // Chord progression: 4 chords, each lasts 4 bars = 16-bar phrase
 // Progressions are arrays of root scale degrees
@@ -32,6 +42,8 @@
 0 => int chordIdx;      // current chord in progression (0-3)
 0 => int chordRoot;     // current chord root degree
 0 => int phraseBar;     // bar within 16-bar phrase (0-15)
+0 => int phraseRepeat;
+int chordSub[4];
 
 // Lead motif: 4-bar phrase (64 steps) with melodic contour
 // Bar 1: call (short figure), Bar 2: response (variation),
@@ -166,7 +178,9 @@ fun void generateMotif() {
 [1, 2, 3, 4, 0] @=> int autoNextSection[];
 
 // ============ MASTER BUS ============
-Gain master => dac;
+Gain masterOut => HPF fxHPF => dac;
+20.0 => fxHPF.freq; 0.8 => fxHPF.Q;
+Gain master => masterOut;
 0.0 => master.gain;
 
 // ============ SCALES ============
@@ -324,6 +338,8 @@ fun void readState() {
             seed % progs.cap() => progIdx;
             0 => phraseBar;
             0 => chordIdx;
+            0 => phraseRepeat;
+            for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
             progs[progIdx][0] => chordRoot;
             generateMotif();
 
@@ -357,6 +373,18 @@ fun void readState() {
             if(energy > 3) 3 => energy;
             if(energy < 0) 0 => energy;
             0 => barsSinceEvent;
+
+            // Coming back from silence? Classic techno filtered intro
+            if(masterTarget < 0.01 && newEnergy >= 2) {
+                if((seed + newSeed) % 2 == 0) {
+                    1 => introActive;
+                    0 => introBar;
+                    if((seed * 3 + newSeed) % 2 == 0) 2 => introLen;
+                    else 4 => introLen;
+                    2500.0 => fxHPF.freq;
+                }
+            }
+
             1.0 => masterTarget;
 
             // Cancel auto-evolution — real event takes over
@@ -410,10 +438,20 @@ while(true) {
 
         // Advance phrase / chord progression
         phraseBar + 1 => phraseBar;
-        if(phraseBar >= 16) 0 => phraseBar;
+        if(phraseBar >= 16) {
+            0 => phraseBar;
+            phraseRepeat + 1 => phraseRepeat;
+            for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
+            if(phraseRepeat % 3 == 2 && energy >= 2) {
+                (seed * 13 + phraseRepeat) % 4 => int subIdx;
+                // Modal interchange: shift chord up 2 degrees
+                (progs[progIdx][subIdx] + 2) % 5 => chordSub[subIdx];
+            }
+        }
         phraseBar / 4 => chordIdx;
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
         progs[progIdx][chordIdx] => chordRoot;
+        if(chordSub[chordIdx] >= 0) chordSub[chordIdx] => chordRoot;
 
         // Energy decay — but trigger auto-evolution instead of silence
         if(barsSinceEvent > 6 && energy > 0 && transition == 0) {
@@ -435,6 +473,60 @@ while(true) {
         if(energy >= 1 && motifGenerated) {
             if(phraseBar == 15) 2 => drumFill;
             else if(phraseBar % 4 == 3) 1 => drumFill;
+        }
+
+        // ---- INTRO: call to the dancefloor ----
+        if(introActive) {
+            introBar + 1 => introBar;
+            if(introBar > introLen) {
+                // DROP — full groove lands
+                0 => introActive;
+                20.0 => fxHPF.freq;
+                0.45 => ldDlyFb.gain;
+                0.06 => ldDly1.gain;
+            } else {
+                introBar $ float / introLen $ float => float p;
+                // HPF sweeps down: classic techno filter open
+                2500.0 * (1.0 - p) * (1.0 - p) + 20.0 => fxHPF.freq;
+                // Delay feedback wash during intro
+                0.60 => ldDlyFb.gain;
+                0.08 => ldDly1.gain;
+            }
+        }
+
+        // ---- FX: occasional tension/release ----
+        if(fxType == 0 && energy >= 2 && motifGenerated && phraseBar == 12 && transition == 0 && !introActive) {
+            (seed * 7 + stepCount / 320) % 5 => int fxRoll;
+            if(fxRoll <= 2) {
+                fxRoll + 1 => fxType;
+                0 => fxBar;
+                4 => fxLen;
+            }
+        }
+        if(fxType > 0) {
+            fxBar + 1 => fxBar;
+            if(fxBar > fxLen) {
+                0 => fxType; 0 => fxBar;
+            } else {
+                fxBar $ float / fxLen $ float => float p;
+                if(fxType == 1) {
+                    // HPF sweep: classic techno riser — sweeps higher than lofi
+                    20.0 + p * p * 2000.0 => fxHPF.freq;
+                } else if(fxType == 2) {
+                    // Pad filter resonance sweep: Q rises, filter sweeps
+                    1.8 + p * 6.0 => padF.Q;
+                    padFiltTarget + p * 800.0 => padF.freq;
+                } else if(fxType == 3) {
+                    // Delay feedback swell
+                    0.45 + p * 0.30 => ldDlyFb.gain;
+                    0.06 + p * 0.04 => ldDly1.gain;
+                }
+            }
+        }
+        if(fxType == 0 && !introActive) {
+            if(padF.Q() > 1.9) padF.Q() * 0.92 + 1.8 * 0.08 => padF.Q;
+            if(ldDlyFb.gain() > 0.46) ldDlyFb.gain() * 0.95 + 0.45 * 0.05 => ldDlyFb.gain;
+            if(ldDly1.gain() > 0.065) ldDly1.gain() * 0.93 + 0.06 * 0.07 => ldDly1.gain;
         }
     }
 
@@ -479,10 +571,11 @@ while(true) {
         0.0 => ldAmpTarget;
     }
 
-    // ---- KICK (with velocity) ----
+    // ---- KICK (with velocity + humanization) ----
     if(!kickMuted && kPat[energy][s]) {
         0.0 => kickPh;
-        0.5 + 0.5 * kickVel[s] => float kVel; // range 0.5-1.0
+        ((seed * 17 + stepCount) % 100 - 50) / 1000.0 => float velDrift;
+        0.5 + 0.5 * (kickVel[s] + velDrift) => float kVel;
         kVel * 0.8 => kickOsc.gain;
         kVel * 0.3 => kickClick.gain;
         kickClickEnv.keyOn();
@@ -508,6 +601,19 @@ while(true) {
 
     // ---- CLAP ----
     if(clpPat[energy][s]) clpEnv.keyOn();
+
+    // ---- DRUM MICRO-VARIATION ----
+    if(energy >= 2) {
+        (seed + phraseBar * 7) % 8 => int drumVar;
+        if(drumVar < 3 && s == 7 && !chPat[energy][s]) {
+            0.02 => chG.gain;
+            chEnv.keyOn();
+        }
+        if(drumVar >= 6 && s == 3 && !ohPat[energy][s]) {
+            0.015 => ohG.gain;
+            ohEnv.keyOn();
+        }
+    }
 
     // ---- DRUM FILL (builds at phrase boundaries) ----
     if(drumFill > 0 && energy >= 1) {
@@ -585,11 +691,16 @@ while(true) {
     // ---- LEAD (cell motif, follows arrangement) ----
     if(transition != 4 && motifGenerated && arrLevel >= 3) {
         motif[phraseStep % PHRASE_LEN] => int deg;
+        // Motif variation per repetition
+        phraseBar / 4 => int motifRep;
+        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => deg;
+        if(motifRep == 3 && deg >= 0 && phraseStep % 8 == 6) deg - 1 => deg;
         if(deg >= 0) {
             (deg + chordRoot) % 5 => deg;
             if(deg < 0) deg + 5 => deg;
             4 => int ldOct;
             if(energy >= 3 && phraseStep >= 32) 5 => ldOct;
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) 5 => ldOct;
             Std.mtof(note(deg, ldOct)) => ldOsc1.freq;
             ldOsc1.freq() * 2.0 => ldOsc2.freq;
             phraseStep % 16 => int localStep;
@@ -658,12 +769,19 @@ while(true) {
         if(ldAmpTarget > 0.01) ldAmpTarget * 0.988 => ldAmpTarget;
 
         // Pad filter sweep with LFO modulation
-        padLfoPhase + 0.002 => padLfoPhase;
+        0.002 => float padLfoRate;
+        if(arrLevel >= 3) padLfoRate * 1.5 => padLfoRate;
+        if(phraseBar % 4 == 2) padLfoRate * 1.3 => padLfoRate;
+        if(phraseBar >= 12) padLfoRate * 0.7 => padLfoRate;
+        padLfoPhase + padLfoRate => padLfoPhase;
         Math.sin(padLfoPhase) * 200.0 => float padLfoMod;
         padF.freq() + ((padFiltTarget + padLfoMod) - padF.freq()) * 0.015 => padF.freq;
         if(padFiltTarget > 300.0) padFiltTarget * 0.9997 => padFiltTarget;
         padG.gain() + (padGainTarget - padG.gain()) * 0.01 => padG.gain;
         if(transition == 4) 0.0 => padGainTarget;
+
+        // FX: smooth HPF back toward 20Hz when not active (skip during intro + HPF sweep)
+        if(fxType != 1 && !introActive) fxHPF.freq() + (20.0 - fxHPF.freq()) * 0.04 => fxHPF.freq;
 
         // Master gain smooth
         masterGain + (masterTarget - masterGain) * 0.02 => masterGain;

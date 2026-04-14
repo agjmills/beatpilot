@@ -19,6 +19,16 @@
 0.8 => float volume;
 0 => int phraseStep;
 
+// ============ FX STATE (occasional tension/release) ============
+0 => int fxType;  // 0=none, 1=hpf_sweep, 2=reverb_wash, 3=shimmer_swell
+0 => int fxBar;
+0 => int fxLen;
+
+// ============ INTRO STATE (call to the dancefloor) ============
+0 => int introActive;
+0 => int introBar;
+0 => int introLen;
+
 // ============ ARP LINE (64 steps = 4 bars of 16 steps) ============
 int arpLine[64];
 
@@ -40,6 +50,8 @@ int arrangement[16];
 0 => int chordIdx;
 0 => int chordRoot;
 0 => int phraseBar;
+0 => int phraseRepeat;
+int chordSub[4];
 0 => int mood;  // 0=warm, 1=dark — affects scale choice and tension
 
 // ============ AUTO-EVOLUTION ============
@@ -52,11 +64,13 @@ int arrangement[16];
 [1, 2, 5, 6, 0, 3, 4] @=> int autoNextSection[];
 
 // ============ MASTER BUS + REVERB ============
-Gain master => Gain dryOut => dac;
+Gain masterOut => HPF fxHPF => dac;
+20.0 => fxHPF.freq; 0.5 => fxHPF.Q;
+Gain master => Gain dryOut => masterOut;
 0.0 => master.gain;
 
 // Multi-tap delay reverb — 4 taps with feedback for diffuse wash
-master => DelayL rv1 => Gain rvFb1 => LPF rvF1 => Gain rvMix => dac;
+master => DelayL rv1 => Gain rvFb1 => LPF rvF1 => Gain rvMix => masterOut;
 master => DelayL rv2 => Gain rvFb2 => LPF rvF2 => rvMix;
 master => DelayL rv3 => Gain rvFb3 => LPF rvF3 => rvMix;
 master => DelayL rv4 => Gain rvFb4 => LPF rvF4 => rvMix;
@@ -253,6 +267,8 @@ fun void readState() {
             0 => phraseBar;
             0 => chordIdx;
             0 => phraseStep;
+            0 => phraseRepeat;
+            for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
             progs[progIdx][0] => chordRoot;
 
             // Generate arp pattern and arrangement from seed
@@ -263,6 +279,17 @@ fun void readState() {
             if(energy > 3) 3 => energy;
             if(energy < 0) 0 => energy;
             0 => barsSinceEvent;
+
+            // Coming back from silence? Ethereal ambient intro
+            if(masterTarget < 0.01 && newEnergy >= 2) {
+                if((seed + newSeed) % 2 == 0) {
+                    1 => introActive;
+                    0 => introBar;
+                    4 => introLen; // ambient always gets 4-bar intro
+                    400.0 => fxHPF.freq;
+                }
+            }
+
             1.0 => masterTarget;
 
             // Cancel auto-evolution
@@ -318,10 +345,20 @@ while(true) {
 
         // Advance chord progression: change every 4 bars
         phraseBar + 1 => phraseBar;
-        if(phraseBar >= 16) 0 => phraseBar;
+        if(phraseBar >= 16) {
+            0 => phraseBar;
+            phraseRepeat + 1 => phraseRepeat;
+            for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
+            if(phraseRepeat % 3 == 2 && energy >= 2) {
+                (seed * 13 + phraseRepeat) % 4 => int subIdx;
+                // Deceptive resolution: up 5 degrees
+                (progs[progIdx][subIdx] + 5) % 7 => chordSub[subIdx];
+            }
+        }
         phraseBar / 4 => chordIdx;
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
         progs[progIdx][chordIdx] => chordRoot;
+        if(chordSub[chordIdx] >= 0) chordSub[chordIdx] => chordRoot;
 
         // ---- ARRANGEMENT GATING: control which layers are active ----
         arrangement[phraseBar] => int arrLevel;
@@ -363,6 +400,62 @@ while(true) {
         if(barsSinceEvent > 12 && energy == 0) {
             0.0 => masterTarget;
         }
+
+        // ---- INTRO: ethereal fade-in ----
+        if(introActive) {
+            introBar + 1 => introBar;
+            if(introBar > introLen) {
+                // Resolve — full sound opens
+                0 => introActive;
+                20.0 => fxHPF.freq;
+                0.25 => rvMix.gain;
+                0.45 => rvFb1.gain; 0.43 => rvFb2.gain;
+            } else {
+                introBar $ float / introLen $ float => float p;
+                // HPF sweeps down: gentle, ethereal
+                400.0 * (1.0 - p) * (1.0 - p) + 20.0 => fxHPF.freq;
+                // Reverb wash: lush, enveloping
+                0.38 => rvMix.gain;
+                0.50 => rvFb1.gain; 0.48 => rvFb2.gain;
+                // Shimmer swell during intro
+                0.05 + p * 0.02 => shimAmpTarget;
+            }
+        }
+
+        // ---- FX: occasional tension/release ----
+        if(fxType == 0 && energy >= 2 && phraseBar == 12 && !introActive) {
+            (seed * 7 + stepCount / 320) % 5 => int fxRoll;
+            if(fxRoll <= 2) {
+                fxRoll + 1 => fxType;
+                0 => fxBar;
+                4 => fxLen;
+            }
+        }
+        if(fxType > 0) {
+            fxBar + 1 => fxBar;
+            if(fxBar > fxLen) {
+                0 => fxType; 0 => fxBar;
+            } else {
+                fxBar $ float / fxLen $ float => float p;
+                if(fxType == 1) {
+                    // HPF sweep: very subtle for ambient — just thin the low end slightly
+                    20.0 + p * p * 400.0 => fxHPF.freq;
+                } else if(fxType == 2) {
+                    // Reverb wash: lush swell
+                    0.25 + p * 0.20 => rvMix.gain;
+                    0.45 + p * 0.10 => rvFb1.gain;
+                    0.43 + p * 0.10 => rvFb2.gain;
+                } else if(fxType == 3) {
+                    // Shimmer swell: boost shimmer layer
+                    0.03 + p * 0.04 => shimAmpTarget;
+                }
+            }
+        }
+        if(fxType == 0 && !introActive) {
+            if(rvMix.gain() > 0.26) rvMix.gain() * 0.95 + 0.25 * 0.05 => rvMix.gain;
+            if(rvFb1.gain() > 0.46) rvFb1.gain() * 0.95 + 0.45 * 0.05 => rvFb1.gain;
+            if(rvFb2.gain() > 0.44) rvFb2.gain() * 0.95 + 0.43 * 0.05 => rvFb2.gain;
+        }
     }
 
     // ---- DRONE PITCH: follow chord root smoothly ----
@@ -401,9 +494,14 @@ while(true) {
     // ---- ARPEGGIO: follows arpLine pattern instead of random dice ----
     if(arpLine[phraseStep] >= 0 && arrangement[phraseBar] >= 3) {
         arpLine[phraseStep] => int arpDeg;
-        if(arpDeg != lastArpDeg || arpAmpCurrent < 0.004) {
+        // Arp variation per repetition
+        phraseBar / 4 => int motifRep;
+        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => arpDeg; // drop a note
+        if(motifRep == 3 && arpDeg >= 0 && phraseStep % 8 == 6) arpDeg - 1 => arpDeg; // approach
+        if(arpDeg >= 0 && (arpDeg != lastArpDeg || arpAmpCurrent < 0.004)) {
             arpDeg => lastArpDeg;
             3 + ((seed + phraseStep) % 2) => int arpOct;
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) arpOct + 1 => arpOct; // octave up
             Std.mtof(note(arpDeg, arpOct)) => arp.freq;
             0.025 => arpAmpTarget;
         }
@@ -441,7 +539,11 @@ while(true) {
 
         // Pad: breathing amplitude + filter LFO
         padBreathPhase + 0.0008 => padBreathPhase;
-        padLfoPhase + 0.0012 => padLfoPhase;
+        0.0012 => float padLfoRate;
+        if(arrangement[phraseBar] >= 3) padLfoRate * 1.4 => padLfoRate;
+        if(phraseBar % 4 == 2) padLfoRate * 1.2 => padLfoRate;
+        if(phraseBar >= 12) padLfoRate * 0.8 => padLfoRate;
+        padLfoPhase + padLfoRate => padLfoPhase;
         // Amplitude breathes slowly
         padAmpTarget * (0.85 + 0.15 * Math.sin(padBreathPhase)) => float padBreathGain;
         padAmpCurrent + (padBreathGain - padAmpCurrent) * 0.005 => padAmpCurrent;
@@ -480,6 +582,9 @@ while(true) {
         28.0 + 8.0 * Math.sin(stepCount * 0.0006) => rumbleSin.freq;
         // Filter creeps up during tension, adds presence
         40.0 + 40.0 * Math.sin(stepCount * 0.0004) => rumbleFilt.freq;
+
+        // FX: smooth HPF back toward 20Hz when not active (skip during intro + HPF sweep)
+        if(fxType != 1 && !introActive) fxHPF.freq() + (20.0 - fxHPF.freq()) * 0.02 => fxHPF.freq;
 
         // Master
         masterGain + (masterTarget - masterGain) * 0.006 => masterGain;

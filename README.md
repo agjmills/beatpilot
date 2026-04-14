@@ -1,250 +1,226 @@
-# beatpilot
+# Beatpilot
 
-A generative music soundtrack for your Claude Code sessions, powered by [ChucK](https://chuck.cs.princeton.edu/).
+**Generative music that plays while you code.** Five genres, real-time synthesis, zero samples. Your coding activity shapes what you hear — prompts, tool calls, file edits, and errors all influence the key, scale, energy, and melody.
 
-Music plays continuously while Claude works. The groove evolves in real-time — prompts, tool calls, agent spawns, and errors all shape what you hear. Each interaction produces a deterministic hash that influences the key, scale, and pattern, so the same prompt always produces the same musical fingerprint.
+Works with **Claude Code**, **GitHub Copilot CLI**, **Cursor**, **Codex**, **Aider**, and anything else that edits files.
 
-This entire project was vibecoded — built with Claude Code in a single session. It exists so you can vibe while you vibe.
+Built entirely with Claude Code. It exists so you can vibe while you vibe.
 
-## Genres
+https://github.com/user-attachments/assets/placeholder
 
-Switch genres with `/vibe <genre>` inside Claude, or `./vibe.sh <genre>` from the terminal.
+## Quick start
 
-| Genre | BPM | Vibe |
-|-------|-----|------|
-| **techno** | 128 | 4/4 kick, acid bass, minimal lead, drops and risers |
-| **dnb** | 174 | Breakbeats, heavy sub bass, reese, atmospheric pads |
-| **lofi** | 85 | Jazzy chords, brushy drums, vinyl crackle, mellow |
-| **ambient** | 70 | No drums, slow drones, shimmering pads, pure texture |
-| **dub** | 75 | One-drop drums, heavy sub bass, delay throws, skank guitar |
+### 1. Install ChucK (the audio engine)
 
-## How it works
+```bash
+# macOS
+brew install chuck
 
-```
-Claude Code hooks  →  hook.sh  →  state file  →  genre engine (ChucK)
-                                  /tmp/beatpilot-state
+# Linux
+sudo apt install chuck
+
+# Windows — download from https://chuck.cs.princeton.edu/release/
 ```
 
-Each genre has its own ChucK engine in `genres/`. The engine runs a continuous sequencer that reads a state file once per bar. **hook.sh** is called by Claude Code on every prompt, tool call, and lifecycle event — it hashes the content, derives musical parameters, and writes them to the state file.
+### 2. Install Beatpilot
 
-### Energy system
-
-Events control an **energy** level (0–3) that determines which layers play:
-
-| Energy | Triggered by | Techno | D&B | Lo-fi | Ambient |
-|--------|-------------|--------|-----|-------|---------|
-| 0 | Errors, inactivity | Silence | Silence | Silence | Silence |
-| 1 | Stop, decay | Sparse kick | Kick + snare | Soft kick | Drone |
-| 2 | Prompts, tools | Full groove + bass | + reese + pads | + keys + bass | + pads |
-| 3 | Agents, Bash | + lead + drops | + busy breaks | (same as 2) | + shimmer |
-
-Energy decays over time. If Claude goes idle, the groove strips back and eventually fades to silence.
-
-### Content hashing
-
-The text content of each event (prompt text, tool name, file paths, command strings) is hashed to produce:
-
-- **Key** (0–11): root note of the groove
-- **Scale** (0–3): varies per genre (pentatonic, minor, jazzy 7ths, etc.)
-- **Seed** (0–255): selects pattern bank, offsets melody degrees
-
-Same prompt = same musical fingerprint. Different prompts sound different.
-
-### Transitions
-
-Events can trigger musical transitions:
-
-- **Riser + drop**: energy jumps up → kick drops out, noise sweeps up, hats fill, then everything slams back in with an impact hit
-- **Breakdown**: energy drops → filters sweep down, layers strip away
-- **Impact**: big low sine boom when the drop resolves
-
-## Prerequisites
-
-- **[ChucK](https://chuck.cs.princeton.edu/release/)** — the audio engine
-  - macOS: `brew install chuck`
-  - Linux: `sudo apt install chuck` or build from source
-  - Windows: download from the ChucK website
-- **jq** — for JSON parsing in hooks
-  - macOS: `brew install jq`
-  - Linux: `sudo apt install jq`
-
-If you install the plugin without ChucK, you'll see a reminder message in Claude prompting you to install it.
-
-## Installation
-
-### Option A: Claude Code plugin (recommended)
-
+**Claude Code plugin (recommended):**
 ```
 /plugin marketplace add agjmills/beatpilot
 /plugin install beatpilot@beatpilot
 ```
 
-This registers the hooks automatically and gives you `/music` (toggle) and `/vibe` (switch genre) commands.
-
-### Option B: Manual install
-
+**Manual:**
 ```bash
 git clone https://github.com/agjmills/beatpilot.git
 cd beatpilot
 ./install.sh
 ```
 
-This adds hooks to your global `~/.claude/settings.json`. Restart Claude Code to activate.
+### 3. Code. Music plays.
 
-### Option C: Global skills (for development)
+That's it. Music starts when you start coding and fades out when you stop.
 
-If you want to develop beatpilot while using it in other projects, add it as an extra directory:
+## Genres
 
-```bash
-claude --add-dir /path/to/beatpilot
+Switch with `/vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the terminal.
+
+| Genre | BPM | Character |
+|-------|-----|-----------|
+| **techno** | 128 | Four-on-the-floor kick, acid bass, minimal lead, drops and risers |
+| **dnb** | 174 | Breakbeats, heavy sub bass, reese, atmospheric pads, snare rolls |
+| **lofi** | 85 | Jazzy vibraphone chords, brushy drums, vinyl crackle, Rhodey lead |
+| **dub** | 75 | One-drop rhythm, massive delay throws, melodica lead, skank guitar |
+| **ambient** | 70 | No drums. Evolving drones, shimmering pads, slow arpeggios, pure texture |
+
+## Works with any AI coding tool
+
+Beatpilot doesn't care what writes the code — it just needs to know something is happening. There are three ways to connect it:
+
+### Claude Code (hooks — built in)
+
+The plugin install wires this up automatically. Hooks fire on every prompt, tool call, agent spawn, and error.
+
+### GitHub Copilot CLI (hooks)
+
+Add to `~/.copilot/config.json`:
+
+```json
+{
+  "hooks": {
+    "userPromptSubmitted": [{ "type": "command", "bash": "/path/to/beatpilot/adapters/copilot-cli.sh" }],
+    "preToolUse":          [{ "type": "command", "bash": "/path/to/beatpilot/adapters/copilot-cli.sh" }],
+    "postToolUse":         [{ "type": "command", "bash": "/path/to/beatpilot/adapters/copilot-cli.sh" }],
+    "errorOccurred":       [{ "type": "command", "bash": "/path/to/beatpilot/adapters/copilot-cli.sh" }]
+  }
+}
 ```
 
-Or make it permanent with a shell alias:
+### Cursor, Codex, Aider, or anything else (file watcher)
 
+```bash
+# Start watching your project directory
+./adapters/filewatcher.sh /path/to/your/project
+
+# Stop watching
+./adapters/filewatcher.sh --stop
+```
+
+The watcher monitors file changes and maps activity frequency to energy levels. Uses `fswatch` if available (event-driven), otherwise polls with `find`.
+
+Add to your shell profile to auto-start:
 ```bash
 # ~/.zshrc or ~/.bashrc
-alias claude='claude --add-dir /path/to/beatpilot'
+beatpilot-watch() { /path/to/beatpilot/adapters/filewatcher.sh "${1:-.}"; }
 ```
 
-Alternatively, symlink the skills to your global Claude config:
+### Direct state control (for custom integrations)
 
 ```bash
-ln -s /path/to/beatpilot/skills/bp:music ~/.claude/skills/bp:music
-ln -s /path/to/beatpilot/skills/bp:vibe ~/.claude/skills/bp:vibe
-ln -s /path/to/beatpilot/skills/bp:volume ~/.claude/skills/bp:volume
+# write-state.sh <energy 0-3> [content for musical variation]
+./adapters/write-state.sh 2 "editing main.py"
+./adapters/write-state.sh 3 "running tests"
+./adapters/write-state.sh 0 "build failed"
 ```
 
-### Uninstall
+## How it sounds
+
+This isn't random notes over a drum loop. Every engine uses techniques from real composition:
+
+- **Cell-based melodies** — a short 2-3 note figure gets repeated, transposed, inverted, and developed across a 4-bar phrase. Like a real composer working with a motif.
+- **Bass derived from the lead** — both instruments share the same melodic DNA, so they sound like parts of the same piece.
+- **Arrangement masks** — layers enter and exit across 16-bar phrases. Not everything plays all the time.
+- **Chord progressions** — 4-chord sequences with occasional substitutions for harmonic surprise (jazz tritone subs in lofi, modal interchange in techno, etc.)
+- **Motif variation** — the melody changes subtly each time it repeats: dropped notes, octave jumps, approach notes. Your ear never gets bored.
+- **Drum micro-variation** — ghost notes shift bar to bar. No two bars are perfectly identical.
+- **Velocity humanization** — every hit has ±5% jitter. Subtle, but the difference between "music" and "MIDI playback."
+- **Occasional FX** — filter sweeps, reverb washes, delay swells. ~40% chance at phrase boundaries, like a DJ turning knobs.
+- **Dramatic intros** — when music returns from silence, ~50% chance of a filtered buildup that sweeps open and drops into the full groove.
+- **Swing** — every genre has genre-appropriate shuffle. Lofi is heavy, DnB is subtle, techno sits in between.
+
+All of this is **seed-deterministic** — the same coding activity produces the same musical result every time.
+
+## Energy system
+
+Your activity controls an **energy** level (0–3) that determines how many layers play:
+
+| Energy | What plays | Triggered by |
+|--------|-----------|-------------|
+| **0** | Silence (fadeout) | Inactivity, errors |
+| **1** | Kick + basic rhythm | Decay from higher levels |
+| **2** | + bass, pads/keys, full groove | Prompts, file edits, tool calls |
+| **3** | + lead melody, full arrangement | Agent spawns, complex operations |
+
+Energy decays naturally over time. If your AI tool goes idle, the music strips back layer by layer and eventually fades to silence. When activity resumes, it builds back up — sometimes with a dramatic filtered intro.
+
+## Content hashing
+
+The text content of each event is MD5-hashed to produce musical parameters:
+
+- **Key** (0–11) — root note
+- **Scale** (index) — genre-specific (pentatonic, minor, jazzy 7ths, harmonic minor, etc.)
+- **Seed** (0–255) — selects chord progression, motif shape, arrangement template
+
+Same prompt = same musical fingerprint. Different prompts sound different. Your codebase has a soundtrack.
+
+## Controls
+
+### In Claude Code
+
+```
+/music          Toggle on/off
+/vibe dnb       Switch genre
+/volume 50      Set volume (0-100)
+```
+
+### From the terminal
 
 ```bash
-# Manual install
-./uninstall.sh
-
-# Plugin install
-/plugin uninstall beatpilot@beatpilot
-```
-
-## Usage
-
-Once installed, music starts automatically when you begin a Claude session.
-
-### Toggle on/off
-
-```
-/bp:music
-```
-
-Or from the terminal: `./toggle.sh`
-
-### Switch genre
-
-```
-/bp:vibe dnb
-/bp:vibe lofi
-/bp:vibe ambient
-/bp:vibe techno
-/bp:vibe dub
-```
-
-Or from the terminal: `./vibe.sh dnb`
-
-Run `/bp:vibe` or `./vibe.sh` with no argument to list available genres.
-
-### Volume
-
-```
-/bp:volume 50
-/bp:volume      # show current volume
-```
-
-Or from the terminal: `./volume.sh 50`
-
-### Manual control
-
-```bash
-./start.sh    # Start the engine
-./stop.sh     # Stop the engine
+./toggle.sh          # Toggle on/off
+./vibe.sh dnb        # Switch genre
+./volume.sh 50       # Set volume
+./start.sh           # Start engine
+./stop.sh            # Stop engine
 ```
 
 ## File structure
 
 ```
 beatpilot/
-├── hook.sh                # Hook entry point — reads events, writes state
-├── start.sh               # Start the ChucK engine
-├── stop.sh                # Stop the engine
-├── toggle.sh              # Toggle music on/off
-├── vibe.sh                # Switch genre
-├── install.sh             # Manual installer
-├── uninstall.sh           # Manual uninstaller
-├── volume.sh              # Set volume (0-100)
+├── adapters/
+│   ├── write-state.sh      # Core: hashes content → musical params → state file
+│   ├── claude-code.sh      # Claude Code adapter (hook JSON on stdin)
+│   ├── copilot-cli.sh      # GitHub Copilot CLI adapter
+│   └── filewatcher.sh      # Universal adapter (watches filesystem)
 ├── genres/
-│   ├── techno.ck          # 128 BPM — kicks, acid bass, drops
-│   ├── dnb.ck             # 174 BPM — breakbeats, reese, pads
-│   ├── lofi.ck            # 85 BPM — jazzy chords, vinyl crackle
-│   ├── ambient.ck         # 70 BPM — drones, shimmers, no drums
-│   └── dub.ck             # 75 BPM — one-drop, delay throws, sub bass
-├── .claude-plugin/
-│   ├── plugin.json        # Plugin manifest
-│   └── marketplace.json   # Marketplace definition
-├── hooks/
-│   └── hooks.json         # Hook config for plugin installs
-└── skills/
-    ├── bp:music/
-    │   └── SKILL.md       # /bp:music — toggle on/off
-    ├── bp:vibe/
-    │   └── SKILL.md       # /bp:vibe — switch genre
-    └── bp:volume/
-        └── SKILL.md       # /bp:volume — set volume
+│   ├── techno.ck            # 128 BPM — kicks, acid, drops
+│   ├── dnb.ck               # 174 BPM — breakbeats, reese, atmosphere
+│   ├── lofi.ck              # 85 BPM — jazz chords, vinyl, Rhodey
+│   ├── dub.ck               # 75 BPM — one-drop, delay throws, sub
+│   └── ambient.ck           # 70 BPM — drones, shimmer, no drums
+├── skills/                  # Claude Code slash commands
+├── hook.sh                  # Claude Code hook entry point
+├── start.sh / stop.sh / toggle.sh / vibe.sh / volume.sh
+└── install.sh / uninstall.sh
 ```
 
-## Customization
-
-### Create your own genre
-
-Copy an existing genre file and tweak it:
+## Create your own genre
 
 ```bash
-cp genres/techno.ck genres/mygenre.ck
-# Edit BPM, patterns, synth parameters...
-./vibe.sh mygenre
+cp genres/techno.ck genres/house.ck
+# Edit BPM, drum patterns, synth params, chord progressions...
+./vibe.sh house
 ```
 
-The engine structure is the same across genres — BPM, patterns, synth routing, and parameter values are what differ.
-
-### Edit patterns
-
-Patterns are 16-step arrays, one per energy level. Values are scale degrees (`0` = root, `1` = 2nd, etc.), `-1` = rest:
-
-```chuck
-// Bass pattern, energy 3: acid line with octave jumps
-[ 0,-1, 5,-1, 0,-1,-1, 3, 0,-1,-1, 7, 0,-1, 5,-1]
-```
-
-### Change the energy mapping
-
-Edit `hook.sh` to change which events set which energy levels:
-
-```bash
-case "$event" in
-    UserPromptSubmit)  energy=2 ;;
-    SubagentStart)     energy=3 ;;
-    Stop)              energy=1 ;;
-    # ...
-esac
-```
+See `CLAUDE.md` for the full sound design guidelines — 19 principles covering everything from cell-based composition to reverb tuning. It's a complete handbook for building a genre engine that sounds like music, not a tech demo.
 
 ## How the audio works
 
-Everything is synthesized in real-time by ChucK. No samples or external dependencies.
+Everything is synthesized in real-time by [ChucK](https://chuck.cs.princeton.edu/). No samples, no external dependencies, no DAW. Just math and oscillators.
 
-- **Kick**: SinOsc with rapid pitch decay through LPF + noise click transient
-- **Hats**: Noise through high-pass filters with short ADSR envelopes
-- **Clap/Snare**: Noise through band-pass with shaped decay
-- **Bass**: TriOsc through resonant LPF with per-note filter envelope
-- **Lead**: TriOsc (probabilistic generation — random notes each bar, never repeats)
-- **Pads/Keys**: Layered TriOsc/SinOsc with slow amplitude envelopes
-- **Transitions**: Noise riser sweep + SinOsc impact boom
+- **Drums**: SinOsc pitch sweeps (kick), filtered noise with ADSR (hats/snare/clap)
+- **Bass**: SinOsc/TriOsc through resonant LPF with per-note filter envelopes
+- **Lead**: FM synthesis (DnB), Rhodey model (lofi), detuned oscillator pairs (techno/dub)
+- **Pads**: Detuned TriOsc pairs with slow filter LFO, breathing dynamics
+- **Effects**: 4-tap cross-fed delay reverb, lead delay with feedback, master HPF for sweeps
+- **Dub special**: Dedicated delay throw bus — select notes get "thrown" into a high-feedback delay
+
+## Prerequisites
+
+- **[ChucK](https://chuck.cs.princeton.edu/release/)** — `brew install chuck` / `apt install chuck`
+- **jq** — `brew install jq` / `apt install jq` (for JSON parsing in hooks)
+- **md5sum** or **md5** (included on macOS/Linux)
+- Optional: **fswatch** for efficient file watching (`brew install fswatch`)
+
+## Uninstall
+
+```bash
+# Plugin
+/plugin uninstall beatpilot@beatpilot
+
+# Manual
+./uninstall.sh
+```
 
 ## License
 
