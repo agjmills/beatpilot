@@ -1,2 +1,4 @@
 .claude/
 *.pid
+.DS_Store
+samples/

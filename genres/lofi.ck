@@ -1,6 +1,12 @@
 // lofi.ck - Beatpilot Lo-fi / Chillhop Engine
 // 85 BPM, mellow, jazzy, dusty
 
+// ============ SAMPLE DETECTION ============
+// Samples are optional — install with ./install-samples.sh
+// Falls back to synthesis when samples/ doesn't exist
+me.dir() + "/../samples/lofi/" => string smpDir;
+0 => int useSamples;
+
 // ============ CLOCK ============
 85.0 => float BPM;
 (60.0 / BPM / 4.0)::second => dur stepDur;
@@ -199,6 +205,37 @@ rvFb1 => rv3; rvFb2 => rv4; rvFb3 => rv1; rvFb4 => rv2;
 0.22 => rvMix.gain;
 0.78 => dryOut.gain;
 
+// ============ SAMPLE BUFFERS (optional — loaded if samples/ exists) ============
+SndBuf smpKick => Gain smpKickG => master;
+SndBuf smpSnare => Gain smpSnareG => master;
+SndBuf smpSnareGhost => Gain smpSnareGhostG => master;
+SndBuf smpHat => Gain smpHatG => master;
+SndBuf smpHatOpen => Gain smpHatOpenG => master;
+0.0 => smpKickG.gain; 0.0 => smpSnareG.gain; 0.0 => smpSnareGhostG.gain;
+0.0 => smpHatG.gain; 0.0 => smpHatOpenG.gain;
+
+// Try loading samples
+FileIO smpTest;
+if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
+    smpTest.close();
+    smpKick.read(smpDir + "kick.wav");
+    smpSnare.read(smpDir + "snare.wav");
+    smpSnareGhost.read(smpDir + "snare_ghost.wav");
+    smpHat.read(smpDir + "hat_closed.wav");
+    smpHatOpen.read(smpDir + "hat_open.wav");
+    smpKick.samples() => smpKick.pos;
+    smpSnare.samples() => smpSnare.pos;
+    smpSnareGhost.samples() => smpSnareGhost.pos;
+    smpHat.samples() => smpHat.pos;
+    smpHatOpen.samples() => smpHatOpen.pos;
+    0.25 => smpKickG.gain; 0.20 => smpSnareG.gain; 0.10 => smpSnareGhostG.gain;
+    0.15 => smpHatG.gain; 0.12 => smpHatOpenG.gain;
+    1 => useSamples;
+    <<< "Beatpilot [lofi]: samples loaded" >>>;
+} else {
+    <<< "Beatpilot [lofi]: no samples found, using synthesis" >>>;
+}
+
 // Jazzier scales: major 7, minor 7, dorian, lydian
 [[0,2,4,7,11], [0,3,5,7,10], [0,2,3,5,9], [0,2,4,6,7]] @=> int scales[][];
 
@@ -292,9 +329,14 @@ ldDlyFb => ldDly;
 1800.0 => ldDlyF.freq; // darker delay for warmth
 
 // ============ VINYL CRACKLE ============
+// Two layers: low rumble (turntable motor) + intermittent pops (dust/scratches)
 Noise vinyl => BPF vinylBP => Gain vinylG => master;
-1800.0 => vinylBP.freq; 0.5 => vinylBP.Q;
+4500.0 => vinylBP.freq; 4.0 => vinylBP.Q; // narrow, high — crackly pops not hiss
 0.0 => vinylG.gain;
+// Second layer: low-end rumble for that turntable warmth
+Noise vinylRumble => LPF vinylLPF => Gain vinylRumbleG => master;
+120.0 => vinylLPF.freq; 1.0 => vinylLPF.Q;
+0.0 => vinylRumbleG.gain;
 
 // ============ STATE FILE READER ============
 fun void readState() {
@@ -350,6 +392,7 @@ fun void readState() {
                 0.06 => snG.gain;
                 0.10 => bassG.gain;
                 0.007 => vinylG.gain;
+                0.003 => vinylRumbleG.gain;
             }
             if(energy >= 2) {
                 0.05 => keyAmpTarget;
@@ -401,6 +444,7 @@ while(true) {
                 0.0 => snG.gain;
                 0.0 => bassG.gain;
                 0.0 => vinylG.gain;
+                0.0 => vinylRumbleG.gain;
                 0.0 => ldAmpTarget;
             }
         }
@@ -483,25 +527,44 @@ while(true) {
 
     // ---- KICK (soft, with velocity + humanization) ----
     if(kPat[energy][s]) {
-        0.0 => kickPh;
-        // Per-note jitter: ±5%
         ((seed * 17 + stepCount) % 100 - 50) / 1000.0 => float velDrift;
+        if(useSamples) {
+            0 => smpKick.pos;
+            0.20 + 0.15 * (kickVel[s] + velDrift) => smpKickG.gain;
+        }
+        0.0 => kickPh;
         0.4 + 0.2 * (kickVel[s] + velDrift) => kickOsc.gain;
+        if(useSamples) kickOsc.gain() * 0.3 => kickOsc.gain; // blend: quieter synth when samples active
     }
 
     // ---- SNARE (brush + ghost) ----
     if(snPat[energy][s]) {
+        if(useSamples) {
+            0 => smpSnare.pos;
+            0.15 + 0.10 * hatVel[s] => smpSnareG.gain;
+        }
         0.05 + 0.03 * hatVel[s] => snG.gain;
+        if(useSamples) snG.gain() * 0.3 => snG.gain;
         snEnv.keyOn();
     } else if(snGhost[energy][s]) {
+        if(useSamples) {
+            0 => smpSnareGhost.pos;
+            0.06 => smpSnareGhostG.gain;
+        }
         0.02 => snG.gain;
+        if(useSamples) snG.gain() * 0.3 => snG.gain;
         snEnv.keyOn();
     }
 
     // ---- HATS (with velocity + humanization) ----
     if(chPat[energy][s]) {
         ((seed * 13 + stepCount) % 100 - 50) / 1000.0 => float hVelDrift;
+        if(useSamples) {
+            0 => smpHat.pos;
+            0.10 + 0.10 * (hatVel[s] + hVelDrift) => smpHatG.gain;
+        }
         0.015 + 0.025 * (hatVel[s] + hVelDrift) => chG.gain;
+        if(useSamples) chG.gain() * 0.3 => chG.gain;
         chEnv.keyOn();
     }
 
@@ -666,6 +729,17 @@ while(true) {
         if(ldAmpTarget > 0.003) ldAmpTarget * 0.993 => ldAmpTarget;
         ldFilt.freq() + (ldFiltTarget - ldFilt.freq()) * 0.02 => ldFilt.freq;
         if(ldFiltTarget > 600.0) ldFiltTarget * 0.999 => ldFiltTarget;
+
+        // Vinyl crackle: intermittent pops, not continuous hiss
+        if(vinylG.gain() > 0.001) {
+            // Random pops: most of the time silent, occasional sharp crack
+            if(Math.random2(0, 40) == 0) {
+                0.008 + Math.random2f(0.0, 0.006) => vinylG.gain; // pop!
+                2000.0 + Math.random2f(0.0, 6000.0) => vinylBP.freq; // vary the pop character
+            } else {
+                vinylG.gain() * 0.7 => vinylG.gain; // rapid decay between pops
+            }
+        }
 
         // FX: smooth HPF back toward 20Hz when not active (skip during intro + HPF sweep)
         if(fxType != 1 && !introActive) fxHPF.freq() + (20.0 - fxHPF.freq()) * 0.04 => fxHPF.freq;

@@ -1,6 +1,10 @@
 // dnb.ck - Beatpilot Drum & Bass Engine
 // 174 BPM, breakbeat patterns, heavy sub bass, atmospheric leads
 
+// ============ SAMPLE DETECTION ============
+me.dir() + "/../samples/dnb/" => string smpDir;
+0 => int useSamples;
+
 // ============ CLOCK ============
 174.0 => float BPM;
 (60.0 / BPM / 4.0)::second => dur stepDur;
@@ -178,6 +182,34 @@ rvFb1 => rv3; rvFb2 => rv4; rvFb3 => rv1; rvFb4 => rv2;
 3000.0 => rvF1.freq; 2800.0 => rvF2.freq; 2500.0 => rvF3.freq; 2200.0 => rvF4.freq;
 0.18 => rvMix.gain;
 0.82 => dryOut.gain;
+
+// ============ SAMPLE BUFFERS ============
+SndBuf smpKick => Gain smpKickG => master;
+SndBuf smpSnare => Gain smpSnareG => master;
+SndBuf smpSnareGhost => Gain smpSnareGhostG => master;
+SndBuf smpHat => Gain smpHatG => master;
+SndBuf smpHatOpen => Gain smpHatOpenG => master;
+0.0 => smpKickG.gain; 0.0 => smpSnareG.gain; 0.0 => smpSnareGhostG.gain;
+0.0 => smpHatG.gain; 0.0 => smpHatOpenG.gain;
+
+FileIO smpTest;
+if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
+    smpTest.close();
+    smpKick.read(smpDir + "kick.wav");
+    smpSnare.read(smpDir + "snare.wav");
+    smpSnareGhost.read(smpDir + "snare_ghost.wav");
+    smpHat.read(smpDir + "hat_closed.wav");
+    smpHatOpen.read(smpDir + "hat_open.wav");
+    smpKick.samples() => smpKick.pos;
+    smpSnare.samples() => smpSnare.pos;
+    smpSnareGhost.samples() => smpSnareGhost.pos;
+    smpHat.samples() => smpHat.pos;
+    smpHatOpen.samples() => smpHatOpen.pos;
+    1 => useSamples;
+    <<< "Beatpilot [dnb]: samples loaded" >>>;
+} else {
+    <<< "Beatpilot [dnb]: no samples found, using synthesis" >>>;
+}
 
 // ============ SCALES ============
 [[0,2,4,7,9], [0,3,5,7,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int scales[][];
@@ -568,8 +600,10 @@ while(true) {
             0.0 => kickPh;
             ((seed * 17 + stepCount) % 100 - 50) / 1000.0 => float velDrift;
             0.5 + 0.5 * (kickVel[s] + velDrift) => float kVel;
+            if(useSamples) { 0 => smpKick.pos; kVel * 0.30 => smpKickG.gain; }
             kVel * 0.8 => kickOsc.gain;
             kVel * 0.3 => kickClick.gain;
+            if(useSamples) { kickOsc.gain() * 0.3 => kickOsc.gain; kickClick.gain() * 0.3 => kickClick.gain; }
             kickClickEnv.keyOn();
         }
     }
@@ -579,27 +613,39 @@ while(true) {
     if(variant == 0 && snPatA[energy][s]) 1 => snHit;
     if(variant == 1 && snPatB[energy][s]) 1 => snHit;
     if(snHit) {
+        if(useSamples) { 0 => smpSnare.pos; 0.15 + 0.10 * snVel[s] => smpSnareG.gain; }
         0.08 + 0.04 * snVel[s] => snG.gain;
+        if(useSamples) snG.gain() * 0.3 => snG.gain;
         snEnv.keyOn();
     } else if(snGhost[energy][s]) {
-        // Ghost snare: much quieter
+        if(useSamples) { 0 => smpSnareGhost.pos; 0.06 => smpSnareGhostG.gain; }
         0.03 => snG.gain;
+        if(useSamples) snG.gain() * 0.3 => snG.gain;
         snEnv.keyOn();
     }
 
     // ---- HATS (with velocity) ----
     if(hatFill) {
         (s $ float) / 16.0 => float fillVel;
+        if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * fillVel => smpHatG.gain; }
         0.03 + 0.05 * fillVel => chG.gain;
+        if(useSamples) chG.gain() * 0.3 => chG.gain;
         chEnv.keyOn();
-        if(s % 2 == 0) ohEnv.keyOn();
+        if(s % 2 == 0) {
+            if(useSamples) { 0 => smpHatOpen.pos; 0.08 => smpHatOpenG.gain; }
+            ohEnv.keyOn();
+        }
     } else {
         if(chPat[energy][s]) {
+            if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * hatVel[s] => smpHatG.gain; }
             0.02 + 0.05 * hatVel[s] => chG.gain;
+            if(useSamples) chG.gain() * 0.3 => chG.gain;
             chEnv.keyOn();
         }
         if(ohPat[energy][s]) {
+            if(useSamples) { 0 => smpHatOpen.pos; 0.06 + 0.08 * hatVel[s] => smpHatOpenG.gain; }
             0.02 + 0.04 * hatVel[s] => ohG.gain;
+            if(useSamples) ohG.gain() * 0.3 => ohG.gain;
             ohEnv.keyOn();
         }
     }
@@ -705,9 +751,9 @@ while(true) {
             60.0 + Math.random2f(0.0, 80.0) => ldModTarget;
             // Velocity: phrase contour
             phraseStep % 16 => int localStep;
-            0.035 => float ldVel;
-            if(localStep % 4 == 0) 0.06 => ldVel;
-            else if(localStep % 2 == 0) 0.045 => ldVel;
+            0.025 => float ldVel;
+            if(localStep % 4 == 0) 0.045 => ldVel;
+            else if(localStep % 2 == 0) 0.035 => ldVel;
             if(phraseStep >= 32 && phraseStep < 48) ldVel * 1.2 => ldVel;
             if(phraseStep >= 48) ldVel * 0.7 => ldVel;
             2400.0 + Math.random2f(0.0, 600.0) => ldFiltTarget;

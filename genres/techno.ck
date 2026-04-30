@@ -4,6 +4,10 @@
 // Energy (0-3) controls which layers are active and pattern intensity.
 // Transitions: drops, risers, fills, and breakdowns triggered by events.
 
+// ============ SAMPLE DETECTION ============
+me.dir() + "/../samples/techno/" => string smpDir;
+0 => int useSamples;
+
 // ============ CLOCK ============
 128.0 => float BPM;
 (60.0 / BPM / 4.0)::second => dur stepDur;
@@ -182,6 +186,34 @@ Gain masterOut => HPF fxHPF => dac;
 20.0 => fxHPF.freq; 0.8 => fxHPF.Q;
 Gain master => masterOut;
 0.0 => master.gain;
+
+// ============ SAMPLE BUFFERS ============
+SndBuf smpKick => Gain smpKickG => master;
+SndBuf smpSnare => Gain smpSnareG => master;
+SndBuf smpClap => Gain smpClapG => master;
+SndBuf smpHat => Gain smpHatG => master;
+SndBuf smpHatOpen => Gain smpHatOpenG => master;
+0.0 => smpKickG.gain; 0.0 => smpSnareG.gain; 0.0 => smpClapG.gain;
+0.0 => smpHatG.gain; 0.0 => smpHatOpenG.gain;
+
+FileIO smpTest;
+if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
+    smpTest.close();
+    smpKick.read(smpDir + "kick.wav");
+    smpSnare.read(smpDir + "snare.wav");
+    smpClap.read(smpDir + "clap.wav");
+    smpHat.read(smpDir + "hat_closed.wav");
+    smpHatOpen.read(smpDir + "hat_open.wav");
+    smpKick.samples() => smpKick.pos;
+    smpSnare.samples() => smpSnare.pos;
+    smpClap.samples() => smpClap.pos;
+    smpHat.samples() => smpHat.pos;
+    smpHatOpen.samples() => smpHatOpen.pos;
+    1 => useSamples;
+    <<< "Beatpilot [techno]: samples loaded" >>>;
+} else {
+    <<< "Beatpilot [techno]: no samples found, using synthesis" >>>;
+}
 
 // ============ SCALES ============
 [[0,2,4,7,9], [0,3,5,7,10], [0,2,4,5,7], [0,2,3,7,10]] @=> int scales[][];
@@ -447,6 +479,22 @@ while(true) {
                 // Modal interchange: shift chord up 2 degrees
                 (progs[progIdx][subIdx] + 2) % 5 => chordSub[subIdx];
             }
+            // NEW TRACK: every 4 phrase repeats (~64 bars), evolve into a new track
+            if(phraseRepeat % 4 == 0 && phraseRepeat > 0 && energy >= 1 && transition == 0) {
+                // New seed = new motif, new feel
+                (seed + phraseRepeat * 7 + 43) % 256 => seed;
+                seed % progs.cap() => progIdx;
+                seed % scales.cap() => scaleType;
+                // Shift key by a musically useful interval (4th or 5th)
+                (key + 5 + (seed % 2) * 2) % 12 => key;
+                progs[progIdx][0] => chordRoot;
+                generateMotif();
+                // Trigger a breakdown transition for the DJ mix feel
+                4 => transition;
+                2 => transitionBars;
+                0 => transitionStep;
+                <<< "Beatpilot [techno]: new track" >>>;
+            }
         }
         phraseBar / 4 => chordIdx;
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
@@ -576,31 +624,47 @@ while(true) {
         0.0 => kickPh;
         ((seed * 17 + stepCount) % 100 - 50) / 1000.0 => float velDrift;
         0.5 + 0.5 * (kickVel[s] + velDrift) => float kVel;
+        if(useSamples) {
+            0 => smpKick.pos;
+            kVel * 0.10 => smpKickG.gain;
+        }
         kVel * 0.8 => kickOsc.gain;
         kVel * 0.3 => kickClick.gain;
+        if(useSamples) { kickOsc.gain() * 0.3 => kickOsc.gain; kickClick.gain() * 0.3 => kickClick.gain; }
         kickClickEnv.keyOn();
     }
 
     // ---- HATS (with velocity) ----
     if(hatFill) {
-        // Fill: rapid-fire hats, crescendo toward end
         (s $ float) / 16.0 => float fillVel;
+        if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * fillVel => smpHatG.gain; }
         0.03 + 0.07 * fillVel => chG.gain;
+        if(useSamples) chG.gain() * 0.3 => chG.gain;
         chEnv.keyOn();
-        if(s % 2 == 0) ohEnv.keyOn();
+        if(s % 2 == 0) {
+            if(useSamples) { 0 => smpHatOpen.pos; 0.08 => smpHatOpenG.gain; }
+            ohEnv.keyOn();
+        }
     } else {
         if(chPat[energy][s]) {
+            if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * hatVel[s] => smpHatG.gain; }
             0.03 + 0.06 * hatVel[s] => chG.gain;
+            if(useSamples) chG.gain() * 0.3 => chG.gain;
             chEnv.keyOn();
         }
         if(ohPat[energy][s]) {
+            if(useSamples) { 0 => smpHatOpen.pos; 0.06 + 0.08 * hatVel[s] => smpHatOpenG.gain; }
             0.03 + 0.04 * hatVel[s] => ohG.gain;
+            if(useSamples) ohG.gain() * 0.3 => ohG.gain;
             ohEnv.keyOn();
         }
     }
 
     // ---- CLAP ----
-    if(clpPat[energy][s]) clpEnv.keyOn();
+    if(clpPat[energy][s]) {
+        if(useSamples) { 0 => smpClap.pos; 0.15 => smpClapG.gain; }
+        clpEnv.keyOn();
+    }
 
     // ---- DRUM MICRO-VARIATION ----
     if(energy >= 2) {
@@ -709,7 +773,17 @@ while(true) {
             else if(localStep % 2 == 0) 0.06 => ldVel;
             if(phraseStep >= 32 && phraseStep < 48) ldVel * 1.2 => ldVel;
             if(phraseStep >= 48) ldVel * 0.75 => ldVel;
-            1200.0 + Math.random2f(0.0, 800.0) => ldFiltTarget;
+            // Filter: vary the sweep shape per repetition so it doesn't always "wah" the same
+            if(motifRep == 0) {
+                1200.0 + Math.random2f(0.0, 800.0) => ldFiltTarget; // normal sweep
+            } else if(motifRep == 1) {
+                2800.0 + Math.random2f(0.0, 400.0) => ldFiltTarget; // bright, open — no sweep
+            } else if(motifRep == 2) {
+                600.0 + Math.random2f(0.0, 400.0) => ldFiltTarget; // dark, muffled
+                ldVel * 1.3 => ldVel; // louder to compensate
+            } else {
+                1800.0 + localStep * 80.0 => ldFiltTarget; // staircase — opens through the bar
+            }
             ldVel => ldAmpTarget;
         }
     } else if(arrLevel < 3) {

@@ -1,18 +1,18 @@
-// dub.ck - Beatpilot Dub Engine
-// Deep, spacious dub with one-drop rhythm, massive delay throws, and heavy sub bass.
-// Inspired by Lee "Scratch" Perry, King Tubby. The FX ARE the instrument.
+// reggae.ck - Beatpilot Reggae Engine
+// Warm, bright reggae with one-drop rhythm, guitar skanks, and uplifting progressions.
+// Inspired by Bob Marley, Toots, Jimmy Cliff. Sunshine vibes.
 // Reads state from /tmp/beatpilot-state (written by hook.sh).
-// Energy (0-3) controls layer density and delay throw intensity.
+// Energy (0-3) controls layer density.
 
 // ============ SAMPLE DETECTION ============
-me.dir() + "/../samples/dub/" => string smpDir;
+me.dir() + "/../samples/reggae/" => string smpDir;
 0 => int useSamples;
 
 // ============ CLOCK ============
-70.0 => float BPM; // slower than reggae — heavy, ponderous
+75.0 => float BPM;
 (60.0 / BPM / 4.0)::second => dur stepDur;
 4 => int SUBSTEPS;
-0.55 => float swingAmt; // straighter — dub is more hypnotic than groovy
+0.58 => float swingAmt; // subtle shuffle, similar to DnB
 
 // ============ STATE ============
 0 => int energy;
@@ -41,12 +41,13 @@ me.dir() + "/../samples/dub/" => string smpDir;
 // ============ PHRASE / SONG STRUCTURE ============
 // Chord progression: 4 chords, each lasts 4 bars = 16-bar phrase
 // Dub: simple minor progressions. i-iv, i-v-iv, i-bVII-iv, i-iv-bVII-v
-// Dub progressions: dark, minor, unresolved tension
-// i-iv, i-bVII-iv, i-bVI-iv-bVII — classic dub minor movement
-[[0, 3, 0, 3], [0, 6, 3, 0], [0, 5, 3, 6], [0, 3, 5, 4]] @=> int progs[][];
+// Dub progressions: minor, moody, each chord different
+[[0, 3, 4, 2], [0, 4, 3, 1], [0, 2, 3, 4], [0, 3, 1, 4]] @=> int progs[][];
 0 => int progIdx;
 0 => int chordIdx;
 0 => int chordRoot;
+0 => int skankKey; // tracks the current guitar sample's root note
+[2, 5, 3, 9] @=> int skankKeys[]; // D minor, F major, Eb, A
 0 => int phraseBar;
 0 => int phraseRepeat;
 int chordSub[4];
@@ -151,16 +152,15 @@ fun void generateMotif() {
     s % 4 => int arrType;
     if(arrType == 0) {
         // Build: bass → +pad/skank → +lead → strip to bass + echoes
-        // Dub: mostly bass, layers appear briefly then vanish into delay
-        [1,1,1,0, 1,1,2,1, 1,1,1,1, 2,1,3,1] @=> int arrA[];
+        [1,1,1,1, 2,2,2,2, 3,3,3,3, 1,1,2,2] @=> int arrA[];
         for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
     } else if(arrType == 1) {
         // Call-response: lead thrown into delay, then just echoes
-        [1,1,1,1, 2,1,1,1, 1,1,2,1, 3,1,1,0] @=> int arrB[];
+        [1,1,3,3, 1,1,3,3, 2,2,3,3, 3,3,1,1] @=> int arrB[];
         for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
     } else if(arrType == 2) {
         // Full then strip: classic dub breakdown
-        [0,1,1,1, 1,2,1,1, 1,1,1,2, 1,3,1,0] @=> int arrC[];
+        [2,2,3,3, 3,3,3,3, 1,1,1,1, 2,2,3,3] @=> int arrC[];
         for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
     } else {
         // Spacious: mostly sparse, occasional full bars
@@ -208,9 +208,9 @@ rvFb1 => rv3; rvFb2 => rv4; rvFb3 => rv1; rvFb4 => rv2;
 // Dark, splashy — lower LP, higher feedback than other genres
 1200.0 => rvF1.freq; 1000.0 => rvF2.freq;
 900.0 => rvF3.freq; 800.0 => rvF4.freq;
-0.50 => rvFb1.gain; 0.48 => rvFb2.gain; // more feedback — cavernous
-0.44 => rvFb3.gain; 0.40 => rvFb4.gain;
-0.35 => rvMix.gain; // reverb is louder in the mix
+0.45 => rvFb1.gain; 0.42 => rvFb2.gain;
+0.38 => rvFb3.gain; 0.35 => rvFb4.gain;
+0.28 => rvMix.gain;
 0.72 => dryOut.gain;
 
 // ============ SAMPLE BUFFERS ============
@@ -236,9 +236,9 @@ if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
     smpHat.samples() => smpHat.pos;
     smpHatOpen.samples() => smpHatOpen.pos;
     1 => useSamples;
-    <<< "Beatpilot [dub]: samples loaded" >>>;
+    <<< "Beatpilot [reggae]: samples loaded" >>>;
 } else {
-    <<< "Beatpilot [dub]: no samples found, using synthesis" >>>;
+    <<< "Beatpilot [reggae]: no samples found, using synthesis" >>>;
 }
 
 // ============ DUB DELAY THROW BUS ============
@@ -249,16 +249,17 @@ dlyFb => Gain dlyWet => master;
 
 // Dotted quarter = stepDur * 6 at 75 BPM
 (stepDur * 6) => dubDly.max => dubDly.delay;
-0.62 => dlyFb.gain;     // very high feedback — long echoing tails, the FX IS the instrument
-1000.0 => dlyLP.freq;   // echoes get very dark with each repeat
-250.0 => dlyHP.freq;    // echoes get thinner — removes mud
-0.09 => dlyWet.gain;    // louder wet — delay is prominent in the mix
+0.55 => dlyFb.gain;     // high feedback — many repeats, slowly dying
+1500.0 => dlyLP.freq;   // echoes get darker with each repeat
+300.0 => dlyHP.freq;    // echoes get thinner — removes mud
+0.06 => dlyWet.gain;    // wet level to master
 0.0 => float dlyWetTarget;
 0.06 => dlyWetTarget;
 
 // ============ SCALES ============
-// Dub: dark only — minor pentatonic, phrygian, harmonic minor, natural minor
-[[0,3,5,7,10], [0,1,3,5,7,8,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int scales[][];
+// Dub: minor pentatonic, natural minor, dorian — almost always minor
+// Reggae: major, bright, sunshine — pentatonic major, major, mixolydian, major 7
+[[0,2,4,7,9], [0,2,4,5,7,9,11], [0,2,4,5,7,9,10], [0,2,4,7,11]] @=> int scales[][];
 // 0: minor pentatonic, 1: minor pent alt voicing, 2: dorian, 3: natural minor
 
 fun int note(int degree, int octave) {
@@ -340,12 +341,12 @@ snrG => Gain snrToDelay => delaySend;
 // ============ SUB BASS ============
 // Dub sub bass: THE foundation. Deep sine, heaviest bass in any genre.
 // Detuned pair for width + slow drift LFO
-SinOsc bassOsc1 => LPF bassF => Gain bassG => master;
-SinOsc bassOsc2 => bassF;
-0.7 => bassOsc1.gain; 0.65 => bassOsc2.gain;
-120.0 => bassF.freq; 3.0 => bassF.Q;
-0.18 => bassG.gain;
-120.0 => float bassFiltTarget;
+TriOsc bassOsc1 => LPF bassF => Gain bassG => master;
+TriOsc bassOsc2 => bassF;
+0.4 => bassOsc1.gain; 0.35 => bassOsc2.gain;
+400.0 => bassF.freq; 0.8 => bassF.Q; // gentle filter, no resonance
+0.12 => bassG.gain;
+400.0 => float bassFiltTarget;
 0.0 => float bassDriftPhase;
 // Bass also feeds reverb lightly
 // bass routes through master to reverb
@@ -382,10 +383,10 @@ TriOsc padOsc1 => LPF padF => Gain padG => master;
 SinOsc padOsc2 => padF;
 TriOsc padOsc3 => padF;
 0.25 => padOsc1.gain; 0.3 => padOsc2.gain; 0.2 => padOsc3.gain;
-250.0 => padF.freq; 1.8 => padF.Q; // darker, more resonant
+350.0 => padF.freq; 1.5 => padF.Q;
 0.0 => padG.gain;
 0.0 => float padGainTarget;
-250.0 => float padFiltTarget;
+350.0 => float padFiltTarget;
 0 => int padLastDeg;
 0.0 => float padLfoPhase;
 
@@ -419,7 +420,7 @@ if(skTest.open(smpDir + "skank_dminor.wav", FileIO.READ)) {
     }
     0.25 => smpSkankG.gain;
     1 => useSkankSamples;
-    <<< "Beatpilot [dub]: guitar skanks loaded" >>>;
+    <<< "Beatpilot [reggae]: guitar skanks loaded" >>>;
 }
 0.0 => skankG.gain;
 
@@ -427,11 +428,11 @@ if(skTest.open(smpDir + "skank_dminor.wav", FileIO.READ)) {
 // skank routes through master to reverb
 // reverb send via master bus
 
-// Skank pattern: sparser in dub — just occasional stabs, not constant off-beat
+// Skank pattern: off-beats — steps 2, 6, 10, 14
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],
- [0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0]] @=> int skankPat[][];
+ [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
+ [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]] @=> int skankPat[][];
 
 // ============ RISER / FX ============
 Noise riserN => BPF riserBP => Gain riserG => master;
@@ -805,8 +806,12 @@ while(true) {
     // ---- SKANK GUITAR (off-beat chops, follows arrangement) ----
     if(transition != 4 && energy >= 2 && skankPat[energy][s]) {
         if(useSkankSamples) {
-            // Real guitar sample — pick from 4 variations
-            (seed + phraseBar) % 4 => int skIdx;
+            // Guitar skank — walk through a chord progression
+            // Samples: 0=Dm, 1=F, 2=Eb, 3=A
+            // Progression: Dm - Dm - F - Dm (4-bar cycle using phraseBar)
+            [0, 0, 1, 0,  0, 0, 1, 0,  0, 1, 0, 1,  0, 0, 1, 0] @=> int skankProg[];
+            skankProg[phraseBar] => int skIdx;
+            1.0 => smpSkank[skIdx].rate;
             0 => smpSkank[skIdx].pos;
             0.20 + Math.random2f(0.0, 0.08) => smpSkankG.gain;
         } else {
@@ -818,28 +823,76 @@ while(true) {
         }
     }
 
-    // ---- SUB BASS (cell-derived, follows arrangement) ----
-    if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
-        bassLine[phraseStep % PHRASE_LEN] => int bDeg;
-        if(bDeg >= 0) {
-            scales[scaleType] @=> int scl[];
-            (bDeg + chordRoot) % scl.cap() => bDeg;
-            if(bDeg < 0) bDeg + scl.cap() => bDeg;
-            1 => int bassOct; // very low — dub sub lives in octave 1-2
-            // Occasional octave up on passing tones in bar 3
-            if(phraseStep >= 32 && phraseStep < 48 && phraseStep % 4 != 0) 2 => bassOct;
-            Std.mtof(note(bDeg, bassOct)) => float bFreq;
+    // ---- BASS (proper reggae groove in D minor) ----
+    // D=38, F=41, G=43, A=45, Bb=46, C=48 (octave 2-3 range)
+    // Energy 1: simple root on beats
+    // Energy 2: classic reggae walking line
+    // Energy 3: busier, syncopated
+    if(transition != 4 && energy >= 1 && arrLevel >= 1) {
+        -1 => int bassMidi;
+        if(energy == 1) {
+            // Minimal: D on beat 1 and 3
+            if(s == 0) 38 => bassMidi;
+            else if(s == 8) 38 => bassMidi;
+        } else if(energy == 2) {
+            // Classic reggae bass: D-F-G-A walkup with bounce
+            if(s == 0) 38 => bassMidi;       // D root
+            else if(s == 6) 41 => bassMidi;  // F (minor third) — offbeat
+            else if(s == 8) 43 => bassMidi;  // G (fourth)
+            else if(s == 14) 45 => bassMidi; // A (fifth) — pickup into next bar
+        } else {
+            // Full groove + occasional solo bars
+            (seed + phraseBar * 3) % 8 => int bassVar;
+            if(bassVar == 0 && phraseBar % 4 == 2) {
+                // Solo bar: fast run up the scale — bar 3 of each chord
+                if(s == 0) 38 => bassMidi;       // D
+                else if(s == 2) 41 => bassMidi;  // F
+                else if(s == 4) 43 => bassMidi;  // G
+                else if(s == 6) 45 => bassMidi;  // A
+                else if(s == 8) 46 => bassMidi;  // Bb
+                else if(s == 10) 48 => bassMidi; // C
+                else if(s == 12) 50 => bassMidi; // D octave up
+                else if(s == 14) 48 => bassMidi; // C — fall back down
+            } else if(bassVar == 1 && phraseBar % 4 == 3) {
+                // Solo bar: syncopated octave jumps
+                if(s == 0) 38 => bassMidi;       // D low
+                else if(s == 3) 50 => bassMidi;  // D high
+                else if(s == 6) 45 => bassMidi;  // A
+                else if(s == 8) 50 => bassMidi;  // D high
+                else if(s == 11) 43 => bassMidi; // G
+                else if(s == 14) 36 => bassMidi; // C — chromatic walk
+            } else if(bassVar == 2 && phraseBar % 8 == 7) {
+                // Solo bar: descending triplet feel
+                if(s == 0) 50 => bassMidi;       // D high
+                else if(s == 2) 48 => bassMidi;  // C
+                else if(s == 4) 46 => bassMidi;  // Bb
+                else if(s == 7) 45 => bassMidi;  // A
+                else if(s == 9) 43 => bassMidi;  // G
+                else if(s == 12) 41 => bassMidi; // F
+                else if(s == 14) 38 => bassMidi; // D — home
+            } else {
+                // Normal energy 3 groove
+                if(s == 0) 38 => bassMidi;       // D root
+                else if(s == 3) 41 => bassMidi;  // F ghost
+                else if(s == 6) 43 => bassMidi;  // G offbeat
+                else if(s == 8) 45 => bassMidi;  // A
+                else if(s == 10) 43 => bassMidi; // G passing
+                else if(s == 14) 36 => bassMidi; // C — chromatic walk up
+            }
+        }
+
+        if(bassMidi >= 0) {
+            Std.mtof(bassMidi) => float bFreq;
             bFreq => bassOsc1.freq;
-            bFreq * 1.002 => bassOsc2.freq; // slight detune for width
-            // Bass drift LFO — slow, alive
+            bFreq * 1.002 => bassOsc2.freq;
             bassDriftPhase + 0.0001 => bassDriftPhase;
             bassOsc2.freq() + Math.sin(bassDriftPhase) * 0.3 => bassOsc2.freq;
-            // Filter follows phrase: opens in bar 3
-            if(phraseStep >= 32 && phraseStep < 48) {
-                200.0 + Math.random2f(0.0, 100.0) => bassFiltTarget;
+            if(s % 4 != 0) {
+                450.0 => bassFiltTarget; // offbeat pop
             } else {
-                120.0 + Math.random2f(0.0, 60.0) => bassFiltTarget;
+                250.0 => bassFiltTarget; // downbeat round
             }
+            0.12 => bassG.gain;
         }
     }
 
@@ -861,7 +914,7 @@ while(true) {
         else 0.025 => padGainTarget;
         if(energy >= 3) padGainTarget * 1.3 => padGainTarget;
         // Dark filter — opens slowly through phrase
-        250.0 + barInChord * 60.0 => padFiltTarget; // darker throughout
+        350.0 + barInChord * 80.0 => padFiltTarget;
     } else if(arrLevel < 2) {
         0.0 => padGainTarget;
     }
@@ -899,11 +952,11 @@ while(true) {
             1000.0 + Math.random2f(0.0, 400.0) => ldFiltTarget; // darker, sits behind the guitar
             ldVel => ldAmpTarget;
 
-            // DELAY THROW: in dub, throw EVERY note into the delay — echoes ARE the melody
-            0.6 => ldToDelay.gain;
-            // Extra hot throw on marked notes
+            // DELAY THROW: send select notes to the dub delay
             if(delayThrow[phraseStep % PHRASE_LEN]) {
-                0.8 => ldToDelay.gain;
+                0.5 => ldToDelay.gain; // hot send to delay bus
+            } else {
+                0.0 => ldToDelay.gain; // no delay throw
             }
         }
     } else if(arrLevel < 3) {
@@ -949,7 +1002,7 @@ while(true) {
 
         // Bass filter slide — slow, heavy for dub
         bassF.freq() + (bassFiltTarget - bassF.freq()) * 0.08 => bassF.freq;
-        if(bassFiltTarget > 100.0) bassFiltTarget * 0.996 => bassFiltTarget;
+        if(bassFiltTarget > 120.0) bassFiltTarget * 0.994 => bassFiltTarget;
 
         // Lead filter — gentle movement, organ-like
         ldF.freq() + (ldFiltTarget - ldF.freq()) * 0.025 => ldF.freq;

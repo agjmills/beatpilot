@@ -1,6 +1,6 @@
 # Beatpilot
 
-**Generative music that plays while you code.** Five genres, real-time synthesis, zero samples. Your coding activity shapes what you hear — prompts, tool calls, file edits, and errors all influence the key, scale, energy, and melody.
+**Generative music that plays while you code.** Seven genres, real-time synthesis, optional sample blends. Your coding activity shapes what you hear — prompts, tool calls, file edits, and errors all influence the key, scale, energy, and melody.
 
 Works with **Claude Code**, **GitHub Copilot CLI**, **Cursor**, **Codex**, **Aider**, and anything else that edits files.
 
@@ -37,7 +37,15 @@ cd beatpilot
 ./install.sh
 ```
 
-### 3. Code. Music plays.
+### 3. (Optional) Install samples for better sound
+
+```bash
+./install-samples.sh
+```
+
+Downloads CC0 drum samples from [Virtuosity Drums](https://github.com/sfzinstruments/virtuosity_drums) and converts them for each genre. Engines automatically detect samples and blend them with synthesis. Without samples, everything still works — pure synthesis, zero dependencies.
+
+### 4. Code. Music plays.
 
 That's it. Music starts when you start coding and fades out when you stop.
 
@@ -50,7 +58,9 @@ Switch with `/vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the term
 | **techno** | 128 | Four-on-the-floor kick, acid bass, minimal lead, drops and risers |
 | **dnb** | 174 | Breakbeats, heavy sub bass, reese, atmospheric pads, snare rolls |
 | **lofi** | 85 | Jazzy vibraphone chords, brushy drums, vinyl crackle, Rhodey lead |
-| **dub** | 75 | One-drop rhythm, massive delay throws, melodica lead, skank guitar |
+| **reggae** | 75 | Locked D-minor groove, real guitar skank samples, bass solos at peak energy |
+| **dub** | 70 | Dark phrygian, sparse arrangement, every lead note thrown into delay |
+| **goa** | 145 | Rolling acid bass, eastern modes, psychedelic FM lead, archive-sourced voice samples |
 | **ambient** | 70 | No drums. Evolving drones, shimmering pads, slow arpeggios, pure texture |
 
 ## Works with any AI coding tool
@@ -163,6 +173,30 @@ Same prompt = same musical fingerprint. Different prompts sound different. Your 
 ./stop.sh            # Stop engine
 ```
 
+## Samples (optional)
+
+By default, all sounds are synthesized in real-time. For richer, more genre-specific drum sounds, install the optional CC0 sample pack:
+
+```bash
+./install-samples.sh
+```
+
+This downloads samples from [Virtuosity Drums](https://github.com/sfzinstruments/virtuosity_drums) (CC0 Public Domain) and converts them to WAV. Each genre gets its own sample set:
+
+| Genre | Mic position | Character |
+|-------|-------------|-----------|
+| **Lofi** | Lo-fi mic | Warm, dusty, filtered — like a tape machine |
+| **Techno** | Mid mic | Punchy, present, tight — studio monitor feel |
+| **DnB** | Snare mic | Cracking, aggressive, close — in your face |
+| **Reggae** | Room mic + real guitar samples | Deep, woody — CC0 acoustic guitar skanks |
+| **Dub** | Room mic | Deep, spacious, reverberant + cross-stick rimshots |
+| **Goa** | Mid mic | Punchy 4/4 + optional voice samples (drop-in `samples/goa/voice/voice_N.wav`) |
+| **Ambient** | Close percussion | Triangle, belltree, sizzle cymbal, shaker textures |
+
+When samples are installed, engines blend them with synthesis (70% sample, 30% synth for warmth). Delete `samples/` to go back to pure synthesis.
+
+Requires `ffmpeg` for FLAC→WAV conversion (`brew install ffmpeg`).
+
 ## File structure
 
 ```
@@ -176,7 +210,9 @@ beatpilot/
 │   ├── techno.ck            # 128 BPM — kicks, acid, drops
 │   ├── dnb.ck               # 174 BPM — breakbeats, reese, atmosphere
 │   ├── lofi.ck              # 85 BPM — jazz chords, vinyl, Rhodey
-│   ├── dub.ck               # 75 BPM — one-drop, delay throws, sub
+│   ├── reggae.ck            # 75 BPM — D-minor groove, skank samples, bass solos
+│   ├── dub.ck               # 70 BPM — dark phrygian, every note delayed
+│   ├── goa.ck               # 145 BPM — acid bass, FM lead, voice samples
 │   └── ambient.ck           # 70 BPM — drones, shimmer, no drums
 ├── skills/                  # Claude Code slash commands
 ├── hook.sh                  # Claude Code hook entry point

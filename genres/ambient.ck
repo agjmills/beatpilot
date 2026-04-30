@@ -1,6 +1,10 @@
 // ambient.ck - Beatpilot Ambient Engine
 // No drums. Evolving pads, warm drones, shimmering textures, all in space.
 
+// ============ SAMPLE DETECTION ============
+me.dir() + "/../samples/ambient/" => string smpDir;
+0 => int useSamples;
+
 // ============ CLOCK ============
 70.0 => float BPM;
 (60.0 / BPM / 4.0)::second => dur stepDur;
@@ -87,6 +91,31 @@ rvFb1 => rv3; rvFb2 => rv4; rvFb3 => rv1; rvFb4 => rv2;
 0.25 => rvMix.gain; // reverb wet level
 0.75 => dryOut.gain; // dry level
 
+// ============ SAMPLE BUFFERS (textural percussion) ============
+SndBuf smpTriangle => Gain smpTriangleG => master;
+SndBuf smpBelltree => Gain smpBelltreeG => master;
+SndBuf smpSizzle => Gain smpSizzleG => master;
+SndBuf smpShaker => Gain smpShakerG => master;
+0.0 => smpTriangleG.gain; 0.0 => smpBelltreeG.gain;
+0.0 => smpSizzleG.gain; 0.0 => smpShakerG.gain;
+
+FileIO smpTest;
+if(smpTest.open(smpDir + "triangle.wav", FileIO.READ)) {
+    smpTest.close();
+    smpTriangle.read(smpDir + "triangle.wav");
+    smpBelltree.read(smpDir + "belltree.wav");
+    smpSizzle.read(smpDir + "sizzle.wav");
+    smpShaker.read(smpDir + "shaker.wav");
+    smpTriangle.samples() => smpTriangle.pos;
+    smpBelltree.samples() => smpBelltree.pos;
+    smpSizzle.samples() => smpSizzle.pos;
+    smpShaker.samples() => smpShaker.pos;
+    1 => useSamples;
+    <<< "Beatpilot [ambient]: samples loaded" >>>;
+} else {
+    <<< "Beatpilot [ambient]: no samples found, using synthesis" >>>;
+}
+
 // ============ SCALES ============
 // 0: pentatonic major (safe, bright)
 // 1: minor pentatonic (mellow)
@@ -153,6 +182,22 @@ SinOsc shim3 => shimFilt;
 0.0 => shimG.gain;
 0.0 => float shimAmpTarget;
 0.0 => float shimAmpCurrent;
+
+// ============ STRINGS (sparse, cinematic — Zimmer-style long tones) ============
+// Detuned TriOsc pairs for warmth, very slow attack, played rarely
+TriOsc str1a => LPF strFilt => Gain strG => master;
+TriOsc str1b => strFilt;
+TriOsc str2a => strFilt;
+TriOsc str2b => strFilt;
+0.15 => str1a.gain; 0.14 => str1b.gain;
+0.12 => str2a.gain; 0.11 => str2b.gain;
+1800.0 => strFilt.freq; 0.6 => strFilt.Q;
+0.0 => strG.gain;
+0.0 => float strAmpTarget;
+0.0 => float strAmpCurrent;
+0.0 => float strFiltTarget;
+1800.0 => strFiltTarget;
+-1 => int lastStrDeg;
 
 // ============ ARPEGGIO (sparse plucks with longer delay wash) ============
 SinOsc arp => LPF arpFilt => Gain arpG => master;
@@ -513,6 +558,44 @@ while(true) {
         0.008 => texAmpTarget;
     }
 
+    // ---- SAMPLE TEXTURES: occasional percussion accents ----
+    if(useSamples && arrangement[phraseBar] >= 2 && s == 0) {
+        (seed + phraseBar * 11) % 12 => int texRoll;
+        if(texRoll == 0 && phraseBar % 4 == 0) {
+            // Triangle hit on chord changes
+            0 => smpTriangle.pos; 0.04 => smpTriangleG.gain;
+        } else if(texRoll == 1 && phraseBar == 8) {
+            // Belltree at midpoint of phrase
+            0 => smpBelltree.pos; 0.03 => smpBelltreeG.gain;
+        } else if(texRoll == 2 && phraseBar % 8 == 7) {
+            // Sizzle cymbal at phrase boundaries
+            0 => smpSizzle.pos; 0.025 => smpSizzleG.gain;
+        } else if(texRoll >= 3 && texRoll <= 4 && phraseBar % 2 == 0 && arrangement[phraseBar] >= 3) {
+            // Gentle shaker on every other bar when full arrangement
+            0 => smpShaker.pos; 0.02 => smpShakerG.gain;
+        }
+    }
+
+    // ---- STRINGS: sparse cinematic melody, only at full arrangement ----
+    if(arrangement[phraseBar] >= 3 && arpLine[phraseStep] >= 0) {
+        arpLine[phraseStep] => int strDeg;
+        // Only play every 8th eligible note — very sparse
+        if((seed + phraseStep) % 8 == 0 && strDeg != lastStrDeg) {
+            strDeg => lastStrDeg;
+            // One octave above the arp, with a second voice a 5th above
+            4 + ((seed + phraseStep) % 2) => int strOct;
+            Std.mtof(note(strDeg, strOct)) => float f1;
+            Std.mtof(note(strDeg + 4, strOct)) => float f2; // a 5th up
+            f1 * 0.999 => str1a.freq; f1 * 1.001 => str1b.freq; // detuned pair
+            f2 * 0.998 => str2a.freq; f2 * 1.002 => str2b.freq;
+            0.025 => strAmpTarget;
+            // Filter opens slowly with each note
+            2200.0 + Math.random2f(0.0, 600.0) => strFiltTarget;
+        }
+    } else if(arrangement[phraseBar] < 3) {
+        0.0 => strAmpTarget;
+    }
+
     // ---- Advance phraseStep (wraps at 64) ----
     (phraseStep + 1) % 64 => phraseStep;
 
@@ -564,6 +647,16 @@ while(true) {
         shimAmpCurrent + (shimAmpTarget - shimAmpCurrent) * 0.003 => shimAmpCurrent;
         shimAmpCurrent => shimG.gain;
         if(shimAmpTarget > 0.002) shimAmpTarget * 0.9999 => shimAmpTarget;
+
+        // Strings: very slow attack and release — bowed, cinematic
+        strAmpCurrent + (strAmpTarget - strAmpCurrent) * 0.001 => strAmpCurrent;
+        strAmpCurrent => strG.gain;
+        if(strAmpTarget > 0.002) strAmpTarget * 0.99992 => strAmpTarget;
+        strFilt.freq() + (strFiltTarget - strFilt.freq()) * 0.002 => strFilt.freq;
+        if(strFiltTarget > 1200.0) strFiltTarget * 0.99998 => strFiltTarget;
+        // Slow detune drift for living string feel
+        str1b.freq() * (1.0 + 0.0003 * Math.sin(stepCount * 0.00008)) => str1b.freq;
+        str2b.freq() * (1.0 + 0.0003 * Math.sin(stepCount * 0.00011)) => str2b.freq;
 
         // Arp: quick attack, slow decay for pluck feel
         arpAmpCurrent + (arpAmpTarget - arpAmpCurrent) * 0.02 => arpAmpCurrent;
