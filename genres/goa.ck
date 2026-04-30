@@ -509,19 +509,15 @@ while(true) {
         // Voice cooldown decay
         if(voiceCooldown > 0) voiceCooldown - 1 => voiceCooldown;
 
-        // Voice trigger: every 4 bars (bars 4, 8, 12 of each phrase) at ~50% chance
-        // when energy >= 2. Cooldown prevents stacking.
-        if(voiceCount > 0 && voiceCooldown == 0 && energy >= 2 && transition == 0) {
-            if(phraseBar == 4 || phraseBar == 8 || phraseBar == 12) {
-                (seed * 11 + phraseBar * 3 + stepCount / 16) % 5 => int vRoll;
-                if(vRoll < 3) {
-                    (seed * 7 + phraseBar + stepCount / 256) % voiceCount => int vIdx;
-                    if(vIdx == voiceLastIdx && voiceCount > 1) (vIdx + 1) % voiceCount => vIdx;
-                    vIdx => voiceLastIdx;
-                    0 => voices[vIdx].pos;
-                    8 => voiceCooldown;
-                    <<< "Beatpilot [goa]: voice ", vIdx + 1 >>>;
-                }
+        // Voice trigger at breakdown bar (bar 12) — ~40% chance when energy >= 2
+        if(voiceCount > 0 && voiceCooldown == 0 && energy >= 2 && phraseBar == 12 && transition == 0) {
+            (seed * 11 + phraseRepeat * 3 + stepCount / 256) % 5 => int vRoll;
+            if(vRoll < 2) {
+                (seed * 7 + phraseRepeat + stepCount / 512) % voiceCount => int vIdx;
+                if(vIdx == voiceLastIdx && voiceCount > 1) (vIdx + 1) % voiceCount => vIdx;
+                vIdx => voiceLastIdx;
+                0 => voices[vIdx].pos;
+                10 => voiceCooldown;
             }
         }
 
