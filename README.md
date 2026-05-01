@@ -195,7 +195,7 @@ This downloads samples from [Virtuosity Drums](https://github.com/sfzinstruments
 | **Piano** | Salamander Grand Piano V3 (CC0) | Yamaha C5 grand, 11 keyzones every 6 semitones, real piano replaces FM synthesis |
 | **Ambient** | Close percussion | Triangle, belltree, sizzle cymbal, shaker textures |
 
-When samples are installed, engines blend them with synthesis (70% sample, 30% synth for warmth). Delete `samples/` to go back to pure synthesis.
+When samples are installed, drum-heavy engines blend them with synthesis (~70% sample, 30% synth for warmth); piano switches its FM voices for real Salamander samples; goa adds voice clips. Delete `samples/` to go back to pure synthesis.
 
 Requires `ffmpeg` for FLAC→WAV conversion (`brew install ffmpeg`).
 
@@ -235,14 +235,16 @@ See `CLAUDE.md` for the full sound design guidelines — 19 principles covering 
 
 ## How the audio works
 
-Everything is synthesized in real-time by [ChucK](https://chuck.cs.princeton.edu/). No samples, no external dependencies, no DAW. Just math and oscillators.
+Every engine is built in [ChucK](https://chuck.cs.princeton.edu/) — synthesis-first, with optional CC0 sample blends layered on top when `./install-samples.sh` has been run. With no samples installed, every genre still works as pure synthesis.
 
-- **Drums**: SinOsc pitch sweeps (kick), filtered noise with ADSR (hats/snare/clap)
+- **Drums**: SinOsc pitch sweeps (kick), filtered noise with ADSR (hats/snare/clap), optionally blended ~70/30 with real drum samples from Virtuosity Drums
 - **Bass**: SinOsc/TriOsc through resonant LPF with per-note filter envelopes
-- **Lead**: FM synthesis (DnB), Rhodey model (lofi), detuned oscillator pairs (techno/dub)
+- **Lead**: FM synthesis (DnB, goa), Rhodey model (lofi), detuned oscillator pairs (techno/dub), real Salamander Grand Piano samples (piano genre)
 - **Pads**: Detuned TriOsc pairs with slow filter LFO, breathing dynamics
 - **Effects**: 4-tap cross-fed delay reverb, lead delay with feedback, master HPF for sweeps
 - **Dub special**: Dedicated delay throw bus — select notes get "thrown" into a high-feedback delay
+- **Goa special**: Spoken-word voice clips routed through the lead delay at phrase boundaries
+- **Reggae special**: Real CC0 acoustic guitar skanks on the off-beat
 
 ## Prerequisites
 
