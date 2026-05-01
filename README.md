@@ -27,7 +27,7 @@ sudo apt install chuck
 **Claude Code plugin (recommended):**
 ```
 /plugin marketplace add agjmills/beatpilot
-/plugin install beatpilot@beatpilot
+/plugin install beatpilot@agjmills
 ```
 
 **Manual:**
@@ -264,7 +264,7 @@ Every engine is built in [ChucK](https://chuck.cs.princeton.edu/) — synthesis-
 
 ```bash
 # Plugin
-/plugin uninstall beatpilot@beatpilot
+/plugin uninstall beatpilot@agjmills
 
 # Manual
 ./uninstall.sh

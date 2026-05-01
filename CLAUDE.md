@@ -246,7 +246,7 @@ Skills in `~/.claude/skills/` are available in all sessions automatically.
 
 ```
 /plugin marketplace add agjmills/beatpilot
-/plugin install beatpilot@beatpilot
+/plugin install beatpilot@agjmills
 ```
 
 This registers the hooks and skills automatically.
