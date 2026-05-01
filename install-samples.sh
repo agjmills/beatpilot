@@ -115,7 +115,7 @@ here named `voice_1.wav` through `voice_8.wav`.
 ffmpeg -ss 00:01:23 -t 3 -i input.mp4 -ac 1 -ar 44100 -sample_fmt s16 voice_1.wav
 ```
 
-Then `/bp:music` (toggle off then on) to reload.
+Then `/beatpilot:music` (toggle off then on) to reload.
 VOICEEOF
 
 # ============ AMBIENT (percussion textures — metallic, resonant) ============
@@ -193,4 +193,4 @@ echo ""
 echo "Installed $total samples across all genres."
 echo "Samples directory: $SAMPLES_DIR"
 echo ""
-echo "Restart Beatpilot to use samples: /bp:music (toggle off then on)"
+echo "Restart Beatpilot to use samples: /beatpilot:music (toggle off then on)"

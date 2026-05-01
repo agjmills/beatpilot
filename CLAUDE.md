@@ -326,4 +326,4 @@ All adapters call `write-state.sh`, which handles:
 - `start.sh` / `stop.sh` / `toggle.sh` — engine lifecycle
 - `vibe.sh` — genre switcher
 - `volume.sh` — volume control (0-100)
-- `skills/` — Claude Code slash commands (`/bp:music`, `/bp:vibe`, `/bp:volume`)
+- `skills/` — Claude Code slash commands (`/beatpilot:music`, `/beatpilot:vibe`, `/beatpilot:volume`)

@@ -1,5 +1,5 @@
 ---
-name: bp:volume
+name: volume
 description: Set Beatpilot volume (0-100)
 user_invocable: true
 ---

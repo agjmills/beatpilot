@@ -1,5 +1,5 @@
 ---
-name: bp:install-samples
+name: install-samples
 description: Download and install the optional CC0 sample pack (Virtuosity Drums + Salamander Grand Piano) for richer sound
 user-invocable: true
 ---

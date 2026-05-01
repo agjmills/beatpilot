@@ -41,7 +41,7 @@ ffmpeg -y -ss 1201 -t 8  -i "$URL" -ac 1 -ar 44100 -sample_fmt s16 voice_7.wav -
 ffmpeg -y -ss 1496 -t 14 -i "$URL" -ac 1 -ar 44100 -sample_fmt s16 voice_8.wav -loglevel error
 ```
 
-Then `/bp:music` (toggle off then on) to reload the engine.
+Then `/beatpilot:music` (toggle off then on) to reload the engine.
 
 ## Adding your own clips
 

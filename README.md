@@ -41,7 +41,7 @@ cd beatpilot
 
 In Claude Code:
 ```
-/bp:install-samples
+/beatpilot:install-samples
 ```
 
 Or from the terminal (if you cloned manually):
@@ -57,7 +57,7 @@ That's it. Music starts when you start coding and fades out when you stop.
 
 ## Genres
 
-Switch with `/bp:vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the terminal.
+Switch with `/beatpilot:vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the terminal.
 
 | Genre | BPM | Character |
 |-------|-----|-----------|
@@ -165,10 +165,10 @@ Same prompt = same musical fingerprint. Different prompts sound different. Your 
 ### In Claude Code
 
 ```
-/bp:music              Toggle on/off
-/bp:vibe dnb           Switch genre
-/bp:volume 50          Set volume (0-100)
-/bp:install-samples    Download optional CC0 sample pack
+/beatpilot:music              Toggle on/off
+/beatpilot:vibe dnb           Switch genre
+/beatpilot:volume 50          Set volume (0-100)
+/beatpilot:install-samples    Download optional CC0 sample pack
 ```
 
 ### From the terminal
