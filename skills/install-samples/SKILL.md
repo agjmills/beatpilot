@@ -7,7 +7,7 @@ user-invocable: true
 Run the Beatpilot sample installer:
 
 ```bash
-${CLAUDE_PLUGIN_ROOT}/install-samples.sh
+install-samples.sh
 ```
 
 Report the output to the user. Do not add any other commentary.

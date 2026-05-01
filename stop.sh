@@ -2,7 +2,8 @@
 # Stop the Beatpilot engine
 SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
 PID_FILE="/tmp/beatpilot.pid"
-ENGINE_PATTERN="chuck .*${SCRIPT_DIR}/genres/.*\\.ck"
+# Match any Beatpilot chuck process on this machine (any clone or install).
+ENGINE_PATTERN="chuck .*/genres/(techno|dnb|lofi|reggae|dub|goa|piano|ambient)\\.ck"
 
 # Kill by PID file
 if [ -f "$PID_FILE" ]; then
@@ -10,8 +11,8 @@ if [ -f "$PID_FILE" ]; then
     rm -f "$PID_FILE"
 fi
 
-# Kill any leftover chuck instances from THIS clone only.
-# Other ChucK processes (other projects, other clones) are left alone.
+# Kill any leftover Beatpilot chuck instances anywhere on the machine.
+# Non-Beatpilot ChucK processes are left alone.
 pkill -f "$ENGINE_PATTERN" 2>/dev/null
 
 rm -f /tmp/beatpilot-state

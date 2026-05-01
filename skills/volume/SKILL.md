@@ -7,7 +7,7 @@ user_invocable: true
 Run the Beatpilot volume control. Pass any arguments the user provided:
 
 ```bash
-$CLAUDE_PLUGIN_ROOT/volume.sh $ARGUMENTS
+volume.sh $ARGUMENTS
 ```
 
 Report the output to the user. Do not add any other commentary.

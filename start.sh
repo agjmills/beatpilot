@@ -5,9 +5,11 @@ PID_FILE="/tmp/beatpilot.pid"
 LOCK_DIR="/tmp/beatpilot.lock"
 GENRE_FILE="/tmp/beatpilot-genre"
 
-# Pattern that matches *our* chuck processes (this clone's genres/*.ck path).
-# Other ChucK projects on the same machine, or other beatpilot clones, won't match.
-ENGINE_PATTERN="chuck .*${SCRIPT_DIR}/genres/.*\\.ck"
+# Pattern that matches any Beatpilot chuck process on this machine,
+# regardless of which clone or install it came from. Other ChucK projects
+# (non-Beatpilot) won't match because the path segment "/genres/" combined
+# with the .ck extension is Beatpilot-specific.
+ENGINE_PATTERN="chuck .*/genres/(techno|dnb|lofi|reggae|dub|goa|piano|ambient)\\.ck"
 
 # Acquire lock — mkdir is atomic on POSIX, so two concurrent start.sh
 # invocations can't both pass this check. Trap clears the lock on exit.
@@ -34,8 +36,8 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# Clean up stale state: kill leftover chuck instances from THIS clone only,
-# leaving unrelated chuck processes (other projects, other clones) alone.
+# Clean up stale state: kill leftover Beatpilot chuck instances anywhere
+# on the machine. Non-Beatpilot ChucK processes are left alone.
 pkill -f "$ENGINE_PATTERN" 2>/dev/null
 rm -f /tmp/beatpilot-state "$PID_FILE"
 sleep 0.1
