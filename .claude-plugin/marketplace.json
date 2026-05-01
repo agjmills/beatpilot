@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "beatpilot",
-      "description": "Generative techno soundtrack for Claude Code sessions, powered by ChucK.",
+      "description": "Generative music that plays while you code. Eight genres (techno, dnb, lofi, reggae, dub, goa, piano, ambient), real-time ChucK synthesis, optional CC0 sample blends. Works with Claude Code, Copilot CLI, Cursor, Aider — anything that edits files.",
       "source": {
         "source": "github",
         "repo": "agjmills/beatpilot"

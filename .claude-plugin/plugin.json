@@ -1,7 +1,7 @@
 {
   "name": "beatpilot",
-  "description": "Generative techno soundtrack for your Claude Code sessions. Music evolves in real-time based on what Claude is doing — prompts, tool calls, agents, and errors all shape the groove.",
-  "version": "0.1.0",
+  "description": "Generative music that plays while you code. Eight genres of real-time ChucK synthesis (techno, dnb, lofi, reggae, dub, goa, piano, ambient) with optional CC0 sample blends. Music evolves based on what your AI assistant is doing — prompts, tool calls, agents, and errors shape the key, scale, energy, and melody.",
+  "version": "0.2.0",
   "author": {
     "name": "Alex"
   }
