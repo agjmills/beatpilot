@@ -39,11 +39,17 @@ cd beatpilot
 
 ### 3. (Optional) Install samples for better sound
 
+In Claude Code:
+```
+/bp:install-samples
+```
+
+Or from the terminal (if you cloned manually):
 ```bash
 ./install-samples.sh
 ```
 
-Downloads CC0 drum samples from [Virtuosity Drums](https://github.com/sfzinstruments/virtuosity_drums) and converts them for each genre. Engines automatically detect samples and blend them with synthesis. Without samples, everything still works — pure synthesis, zero dependencies.
+Downloads CC0 drum samples from [Virtuosity Drums](https://github.com/sfzinstruments/virtuosity_drums) and the [Salamander Grand Piano V3](https://archive.org/details/SalamanderGrandPianoV3) (~74MB), then converts them for each genre. Engines automatically detect samples on load. Without samples, everything still works — pure synthesis, zero dependencies.
 
 ### 4. Code. Music plays.
 
@@ -159,9 +165,10 @@ Same prompt = same musical fingerprint. Different prompts sound different. Your 
 ### In Claude Code
 
 ```
-/bp:music          Toggle on/off
-/bp:vibe dnb       Switch genre
-/bp:volume 50      Set volume (0-100)
+/bp:music              Toggle on/off
+/bp:vibe dnb           Switch genre
+/bp:volume 50          Set volume (0-100)
+/bp:install-samples    Download optional CC0 sample pack
 ```
 
 ### From the terminal
