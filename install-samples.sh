@@ -115,7 +115,7 @@ here named `voice_1.wav` through `voice_8.wav`.
 ffmpeg -ss 00:01:23 -t 3 -i input.mp4 -ac 1 -ar 44100 -sample_fmt s16 voice_1.wav
 ```
 
-Then `/music` (toggle off then on) to reload.
+Then `/bp:music` (toggle off then on) to reload.
 VOICEEOF
 
 # ============ AMBIENT (percussion textures — metallic, resonant) ============
@@ -128,6 +128,39 @@ cp "$VD/perc/close/cabasa/Cabasa1_Rub_v1_rr1_Close.wav"              "$SAMPLES_D
 convert "$VD/oh/crash/oh_crash_sizzle_vl1_rr1.flac"                  "$SAMPLES_DIR/ambient/sizzle.wav"
 convert "$VD/oh/ride/oh_ride_ride_vl1_rr1.flac"                      "$SAMPLES_DIR/ambient/cymbal_wash.wav"
 
+# ============ PIANO (Salamander Grand Piano V3 — CC0 by Alexander Holm) ============
+echo "  piano (Salamander Grand Piano — ~74MB download)..."
+mkdir -p "$SAMPLES_DIR/piano"
+PIANO_TMP="/tmp/beatpilot-piano-$$"
+mkdir -p "$PIANO_TMP"
+PIANO_URL="https://archive.org/download/SalamanderGrandPianoV3/SalamanderGrandPianoV3_OggVorbis.tar.bz2"
+if curl -fsSL "$PIANO_URL" -o "$PIANO_TMP/piano.tar.bz2"; then
+    tar -xjf "$PIANO_TMP/piano.tar.bz2" -C "$PIANO_TMP" 2>/dev/null || true
+    # Find the OggVorbis directory regardless of exact tarball layout
+    SAL_DIR=$(find "$PIANO_TMP" -type d -name "OggVorbis" | head -1)
+    if [ -z "$SAL_DIR" ]; then
+        SAL_DIR=$(find "$PIANO_TMP" -type d -name "SalamanderGrandPianoV3*" | head -1)
+    fi
+    # 11 keyzones at v8 (medium-forte velocity) covering C2-C7 every 6 semitones
+    # Salamander naming: A0v8.ogg ... C8v8.ogg (note name + octave + velocity)
+    declare -a KEYS=("C2:36" "F#2:42" "C3:48" "F#3:54" "C4:60" "F#4:66" "C5:72" "F#5:78" "C6:84" "F#6:90" "C7:96")
+    for entry in "${KEYS[@]}"; do
+        name="${entry%:*}"
+        midi="${entry#*:}"
+        # Salamander uses 'b' for sharps in some sets; try both naming conventions
+        src=$(find "$SAL_DIR" -type f \( -name "${name}v8.ogg" -o -name "${name//#/b}v8.ogg" \) | head -1)
+        if [ -n "$src" ]; then
+            ffmpeg -y -i "$src" -ac 1 -ar 44100 -sample_fmt s16 "$SAMPLES_DIR/piano/p${midi}.wav" -loglevel error
+        else
+            echo "    warning: could not find Salamander sample for ${name} (MIDI ${midi})"
+        fi
+    done
+    rm -rf "$PIANO_TMP"
+else
+    echo "    skipped: could not download Salamander Grand Piano (piano genre will use FM synthesis)"
+    rm -rf "$PIANO_TMP"
+fi
+
 # Clean up
 echo "Cleaning up..."
 rm -rf "$TMP_DIR"
@@ -136,20 +169,28 @@ rm -rf "$TMP_DIR"
 cat > "$SAMPLES_DIR/LICENSE.md" << 'LICEOF'
 # Sample Attribution
 
-All drum samples in this directory are from:
+## Drum samples (lofi, techno, dnb, dub, ambient, goa, reggae)
 
 **Virtuosity Drums**
 - Source: https://github.com/sfzinstruments/virtuosity_drums
 - License: **CC0 1.0 Universal (Public Domain Dedication)**
-- No attribution is legally required, but we credit the creators because it's the right thing to do.
 
-These samples were recorded and released into the public domain by the Virtuosity Drums project contributors.
+## Piano samples (piano genre)
+
+**Salamander Grand Piano V3** by Alexander Holm
+- Source: https://archive.org/details/SalamanderGrandPianoV3
+- License: **CC0 1.0 Universal (Public Domain Dedication)**
+- Yamaha C5 grand recorded in stereo across 16 velocity layers; Beatpilot uses
+  the v8 (medium-forte) layer at 11 keyzones every 6 semitones from C2-C7.
+
+No attribution is legally required for either source, but we credit the creators
+because it's the right thing to do.
 LICEOF
 
 # Count what we installed
 total=$(find "$SAMPLES_DIR" -name "*.wav" | wc -l | tr -d ' ')
 echo ""
-echo "Installed $total samples across 5 genres."
+echo "Installed $total samples across all genres."
 echo "Samples directory: $SAMPLES_DIR"
 echo ""
-echo "Restart Beatpilot to use samples: /music (toggle off then on)"
+echo "Restart Beatpilot to use samples: /bp:music (toggle off then on)"

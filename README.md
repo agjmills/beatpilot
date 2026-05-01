@@ -1,6 +1,6 @@
 # Beatpilot
 
-**Generative music that plays while you code.** Seven genres, real-time synthesis, optional sample blends. Your coding activity shapes what you hear — prompts, tool calls, file edits, and errors all influence the key, scale, energy, and melody.
+**Generative music that plays while you code.** Eight genres, real-time synthesis, optional sample blends. Your coding activity shapes what you hear — prompts, tool calls, file edits, and errors all influence the key, scale, energy, and melody.
 
 Works with **Claude Code**, **GitHub Copilot CLI**, **Cursor**, **Codex**, **Aider**, and anything else that edits files.
 
@@ -51,7 +51,7 @@ That's it. Music starts when you start coding and fades out when you stop.
 
 ## Genres
 
-Switch with `/vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the terminal.
+Switch with `/bp:vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the terminal.
 
 | Genre | BPM | Character |
 |-------|-----|-----------|
@@ -61,6 +61,7 @@ Switch with `/vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the term
 | **reggae** | 75 | Locked D-minor groove, real guitar skank samples, bass solos at peak energy |
 | **dub** | 70 | Dark phrygian, sparse arrangement, every lead note thrown into delay |
 | **goa** | 145 | Rolling acid bass, eastern modes, psychedelic FM lead, archive-sourced voice samples |
+| **piano** | 60 | Neoclassical solo piano. Sparse rolled chords, modal cadences, cathedral reverb. Real Salamander samples when installed |
 | **ambient** | 70 | No drums. Evolving drones, shimmering pads, slow arpeggios, pure texture |
 
 ## Works with any AI coding tool
@@ -158,9 +159,9 @@ Same prompt = same musical fingerprint. Different prompts sound different. Your 
 ### In Claude Code
 
 ```
-/music          Toggle on/off
-/vibe dnb       Switch genre
-/volume 50      Set volume (0-100)
+/bp:music          Toggle on/off
+/bp:vibe dnb       Switch genre
+/bp:volume 50      Set volume (0-100)
 ```
 
 ### From the terminal
@@ -191,6 +192,7 @@ This downloads samples from [Virtuosity Drums](https://github.com/sfzinstruments
 | **Reggae** | Room mic + real guitar samples | Deep, woody — CC0 acoustic guitar skanks |
 | **Dub** | Room mic | Deep, spacious, reverberant + cross-stick rimshots |
 | **Goa** | Mid mic | Punchy 4/4 + optional voice samples (drop-in `samples/goa/voice/voice_N.wav`) |
+| **Piano** | Salamander Grand Piano V3 (CC0) | Yamaha C5 grand, 11 keyzones every 6 semitones, real piano replaces FM synthesis |
 | **Ambient** | Close percussion | Triangle, belltree, sizzle cymbal, shaker textures |
 
 When samples are installed, engines blend them with synthesis (70% sample, 30% synth for warmth). Delete `samples/` to go back to pure synthesis.
@@ -213,6 +215,7 @@ beatpilot/
 │   ├── reggae.ck            # 75 BPM — D-minor groove, skank samples, bass solos
 │   ├── dub.ck               # 70 BPM — dark phrygian, every note delayed
 │   ├── goa.ck               # 145 BPM — acid bass, FM lead, voice samples
+│   ├── piano.ck             # 60 BPM — neoclassical solo piano, Salamander samples
 │   └── ambient.ck           # 70 BPM — drones, shimmer, no drums
 ├── skills/                  # Claude Code slash commands
 ├── hook.sh                  # Claude Code hook entry point
