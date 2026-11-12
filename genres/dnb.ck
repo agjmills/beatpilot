@@ -43,6 +43,8 @@ me.dir() + "/../samples/dnb/" => string smpDir;
 0 => int fxType;  // 0=none, 1=hpf_sweep, 2=reverb_wash, 3=delay_swell
 0 => int fxBar;
 0 => int fxLen;
+20.0 => float fxHPFTarget; // fxHPF glides here per substep: stepping a biquad
+                           // cutoff once per bar clipped the mix to full scale
 
 // ============ INTRO STATE (call to the dancefloor) ============
 0 => int introActive;
@@ -69,6 +71,9 @@ int bassLine[64];       // bass: scale degrees per step (-1 = rest)
 // 0=nothing, 1=bass only, 2=bass+pad, 3=bass+pad+lead
 int arrangement[16];
 
+0 => int motifVarOff; // rotates the bar-2 variation per 16-bar phrase (A / A')
+0 => int arrOff;      // rotates the arrangement template per phrase
+5 => int scaleLen;    // notes in the current scale (scales[] is declared later)
 fun void generateMotif() {
     seed => int s;
     for(0 => int i; i < PHRASE_LEN; i++) -1 => motif[i];
@@ -91,7 +96,7 @@ fun void generateMotif() {
     cellRhythms[(s / 3) % cellRhythms.cap()] @=> int cR[];
     cR[0] => cellPos[0]; cR[1] => cellPos[1]; cR[2] => cellPos[2];
 
-    s % 3 => int varType;
+    (s + motifVarOff) % 3 => int varType;
 
     // Bar 1: cell
     for(0 => int i; i < 3; i++) cellDeg[i] => motif[cellPos[i]];
@@ -108,7 +113,11 @@ fun void generateMotif() {
     }
 
     // Bar 3: cell twice — transposed then original with approach
-    for(0 => int i; i < 3; i++) cellDeg[i] + 3 => motif[32 + cellPos[i]];
+    // Development lands on the chord's 5th: +3 in a pentatonic, +4 in a
+    // 7-note scale (+3 there is the 4th, a semitone off the major 3rd)
+    3 => int t3;
+    if(scaleLen == 7) 4 => t3;
+    for(0 => int i; i < 3; i++) cellDeg[i] + t3 => motif[32 + cellPos[i]];
     cellDeg[0] - 1 => motif[32 + 8];
     cellDeg[0] => motif[32 + 10];
     cellDeg[1] => motif[32 + 14];
@@ -122,31 +131,33 @@ fun void generateMotif() {
     // Root on strong beats, cell's first interval as passing tones
     for(0 => int i; i < PHRASE_LEN; i++) -1 => bassLine[i];
 
-    // Bar 1: root on 1, cell interval as passing tone, root again
+    // Rhythm locks to the two-step kick (steps 0 and 10) with a pickup on
+    // 14, instead of 8/12 where it fought the snare on 12.
+    // Bar 1: root on 1, cell interval on the kick at 10, root pickup
     0 => bassLine[0];
-    cellDeg[1] => bassLine[8];
-    0 => bassLine[12];
+    cellDeg[1] => bassLine[10];
+    0 => bassLine[14];
 
     // Bar 2: same rhythm, transposed matching the cell variation
     if(varType == 0) {
-        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[24]; 2 => bassLine[28];
+        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[26]; 2 => bassLine[30];
     } else if(varType == 1) {
-        0 => bassLine[16]; 0 - leap1 => bassLine[24]; 0 => bassLine[28];
+        0 => bassLine[16]; 0 - leap1 => bassLine[26]; 0 => bassLine[30];
     } else {
-        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[24]; 1 => bassLine[28];
+        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[26]; 1 => bassLine[30];
     }
 
     // Bar 3: busier mirroring lead development — more passing tones
-    0 => bassLine[32]; cellDeg[1] => bassLine[36];
-    3 => bassLine[40]; cellDeg[1] + 3 => bassLine[44];
+    0 => bassLine[32]; cellDeg[1] => bassLine[38];
+    t3 => bassLine[42]; cellDeg[1] + t3 => bassLine[46];
 
     // Bar 4: simple roots resolving — lots of space
     0 => bassLine[48];
-    0 => bassLine[60];
+    0 => bassLine[58];
 
     // --- ARRANGEMENT: which bars have which layers ---
     // 16-bar phrase with structure, not everything all the time
-    s % 3 => int arrType;
+    (s + arrOff) % 3 => int arrType;
     if(arrType == 0) {
         // Build: bass -> +pad -> +lead -> strip
         [1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,1,1] @=> int arrA[];
@@ -183,10 +194,12 @@ Gain masterOut => HPF fxHPF => dac;
 Gain master => Gain dryOut => masterOut;
 0.0 => master.gain;
 // Reverb: 4-tap diffusion
-master => DelayL rv1 => Gain rvFb1 => LPF rvF1 => Gain rvMix => masterOut;
-master => DelayL rv2 => Gain rvFb2 => LPF rvF2 => rvMix;
-master => DelayL rv3 => Gain rvFb3 => LPF rvF3 => rvMix;
-master => DelayL rv4 => Gain rvFb4 => LPF rvF4 => rvMix;
+// HPF on the send: kick/sub recirculating in the taps was pure mud
+master => HPF rvIn; 250.0 => rvIn.freq;
+rvIn => DelayL rv1 => Gain rvFb1 => LPF rvF1 => Gain rvMix => masterOut;
+rvIn => DelayL rv2 => Gain rvFb2 => LPF rvF2 => rvMix;
+rvIn => DelayL rv3 => Gain rvFb3 => LPF rvF3 => rvMix;
+rvIn => DelayL rv4 => Gain rvFb4 => LPF rvF4 => rvMix;
 rvFb1 => rv3; rvFb2 => rv4; rvFb3 => rv1; rvFb4 => rv2;
 0.12::second => rv1.max; 0.1073::second => rv1.delay;
 0.16::second => rv2.max; 0.1423::second => rv2.delay;
@@ -228,10 +241,43 @@ if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
 // ============ SCALES ============
 [[0,2,4,7,9], [0,3,5,7,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int scales[][];
 
+// Harmony scale: in harmonic minor only the V chord uses the raised 7th;
+// every other chord (and the lead over it) uses natural minor, otherwise the
+// leading tone grinds a semitone against iv/VI/III and builds a III+ chord.
+0 => int curScale;
+fun void updateCurScale() {
+    scaleType => curScale;
+    if(scaleType == 2 && ((chordRoot % 7) + 7) % 7 != 4) 3 => curScale;
+}
+
+// Semitone offset of a scale degree. Negative degrees go below the root
+// (floor division) so "a step below" really is below — the old `% 5`
+// wrapped them up a 6th and folded 7-note scales onto 5 notes.
+fun int sdeg(int degree) {
+    scales[curScale] @=> int scl[];
+    scl.cap() => int n;
+    degree / n => int oct;
+    degree % n => int r;
+    if(r < 0) { r + n => r; oct - 1 => oct; }
+    return scl[r] + oct * 12;
+}
+
 fun int note(int degree, int octave) {
-    scales[scaleType] @=> int scl[];
-    if(degree < 0) return 0;
-    return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
+    return key + octave * 12 + sdeg(degree);
+}
+
+// Fold a MIDI note into [lo, lo+12): keeps each layer in its own register
+fun int fold(int midi, int lo) {
+    while(midi < lo) midi + 12 => midi;
+    while(midi >= lo + 12) midi - 12 => midi;
+    return midi;
+}
+
+// Note `deg` scale steps above the current chord root, with the chord root
+// folded into [lo, lo+12). Intervals stay relative to the chord.
+fun int chordNote(int deg, int lo) {
+    fold(key + sdeg(chordRoot), lo) => int r;
+    return r + sdeg(chordRoot + deg) - sdeg(chordRoot);
 }
 
 // ============ VELOCITY MAPS ============
@@ -258,16 +304,26 @@ kickClickEnv.set(0.2::ms, 8::ms, 0.0, 3::ms);
  [1,0,0,0,0,0,1,0,0,0,1,0,0,1,0,0]] @=> int kPatA[][];
 
 // Variant B: more syncopated
+// Variant B: amen-style (K.K. S... ..KK S...) — kick on beat 3 was half-time, not DnB
 [[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
- [1,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0],
- [1,0,0,1,0,0,0,0,1,0,0,1,0,0,1,0]] @=> int kPatB[][];
+ [1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],
+ [1,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0],
+ [1,0,1,0,0,0,0,0,0,0,1,1,0,0,0,0]] @=> int kPatB[][];
 
 // ============ SNARE ============
 Noise snN => BPF snBP => ADSR snEnv => Gain snG => master;
 1800.0 => snBP.freq; 1.5 => snBP.Q;
 snEnv.set(0.3::ms, 80::ms, 0.0, 30::ms);
 0.0 => snG.gain;
+// Tonal body so the snare cracks instead of hissing
+SinOsc snBody => ADSR snBodyEnv => snG;
+190.0 => snBody.freq; 0.45 => snBody.gain;
+snBodyEnv.set(0.5::ms, 45::ms, 0.0, 10::ms);
+fun void snareHit(float g) {
+    g => snG.gain;
+    if(useSamples) snG.gain() * 0.3 => snG.gain;
+    snEnv.keyOn(); snBodyEnv.keyOn();
+}
 
 // Main snare patterns + ghost snare patterns
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -279,13 +335,13 @@ snEnv.set(0.3::ms, 80::ms, 0.0, 30::ms);
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],
  [0,0,0,0,1,0,0,1,0,0,0,0,1,0,0,1],
- [0,0,1,0,1,0,0,1,0,0,1,0,1,0,0,1]] @=> int snPatB[][];
+ [0,0,0,0,1,0,0,1,0,1,0,0,1,0,0,1]] @=> int snPatB[][];
 
 // Ghost snare hits (quieter, for texture)
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,1,0,0,0,0,0,0,0,1,0,0,0,1,0],
- [0,0,1,0,0,0,1,0,0,0,1,0,0,1,0,1]] @=> int snGhost[][];
+ [0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0],
+ [0,0,0,1,0,0,0,1,0,1,0,0,0,0,1,0]] @=> int snGhost[][]; // around the kicks, not on them
 
 // ============ HATS ============
 Noise chN => HPF chHP => ADSR chEnv => Gain chG => master;
@@ -302,7 +358,7 @@ ohEnv.set(1::ms, 120::ms, 0.03, 80::ms);
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
  [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],
- [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0]] @=> int chPat[][];
+ [1,0,1,1,1,0,1,0,1,0,1,1,1,0,1,0]] @=> int chPat[][]; // e3: 16th pickups
 
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -310,17 +366,23 @@ ohEnv.set(1::ms, 120::ms, 0.03, 80::ms);
  [0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0]] @=> int ohPat[][];
 
 // ============ SUB BASS (follows chord root) ============
-SinOsc subOsc => Gain subG => master;
+SinOsc subOsc => ADSR subEnv => Gain subG => master;
+subEnv.set(3::ms, 60::ms, 0.85, 50::ms);
 0.0 => subG.gain;
+0 => int bassHold;      // steps left before the bass note releases
+1.0 => float kickDuck;  // sidechain: sub/reese duck under each kick
 0.0 => float subAmpTarget;
 0.0 => float subAmpCurrent;
 
 // ============ REESE BASS (follows chord root, detuned saws) ============
-SawOsc reese1 => LPF reeseFilt => Gain reeseG => master;
+SawOsc reese1 => LPF reeseFilt => ADSR reeseEnv => Gain reeseG => master;
 SawOsc reese2 => reeseFilt;
 0.4 => reese1.gain; 0.4 => reese2.gain;
-800.0 => reeseFilt.freq; 3.0 => reeseFilt.Q;
+800.0 => reeseFilt.freq; 2.0 => reeseFilt.Q;
+reeseEnv.set(5::ms, 80::ms, 0.8, 70::ms);
 0.0 => reeseG.gain;
+0.0 => float reeseLvl;  // layer target (arrangement-gated)
+0.0 => float reeseCur;
 800.0 => float reeseFiltTarget;
 
 // ============ PAD (detuned pairs for warmth) ============
@@ -330,9 +392,9 @@ TriOsc pad2a => padFilt;
 TriOsc pad2b => padFilt;
 TriOsc pad3a => padFilt;
 TriOsc pad3b => padFilt;
-0.15 => pad1a.gain; 0.15 => pad1b.gain;
-0.15 => pad2a.gain; 0.15 => pad2b.gain;
-0.12 => pad3a.gain; 0.12 => pad3b.gain;
+0.25 => pad1a.gain; 0.25 => pad1b.gain;
+0.25 => pad2a.gain; 0.25 => pad2b.gain;
+0.20 => pad3a.gain; 0.20 => pad3b.gain;
 1400.0 => padFilt.freq; 0.8 => padFilt.Q;
 0.0 => padG.gain;
 0.0 => float padAmpTarget;
@@ -342,7 +404,9 @@ TriOsc pad3b => padFilt;
 
 // ============ LEAD (FM synthesis — glassy, metallic) ============
 // Carrier + modulator with drifting mod depth for evolving timbre
-SinOsc ldMod => SinOsc ldCarr => LPF ldFilt => Gain ldDry => master;
+SinOsc ldMod => SinOsc ldCarr => LPF ldFilt => ADSR ldEnv => Gain ldDry => master;
+ldEnv.set(3::ms, 220::ms, 0.3, 280::ms); // plucked bell, not a pitch-stepping drone
+0 => int ldHold;
 2 => ldCarr.sync; // FM mode
 0.5 => ldCarr.gain;
 80.0 => ldMod.gain; // mod depth in Hz — controls metallicness
@@ -354,11 +418,14 @@ SinOsc ldMod => SinOsc ldCarr => LPF ldFilt => Gain ldDry => master;
 80.0 => float ldModTarget; // target mod depth — varies per note
 
 // Lead delay: dotted-eighth for DnB rhythm
-ldDry => DelayL ldDly => Gain ldDlyFb => LPF ldDlyF => master;
-ldDlyFb => ldDly;
+// Feedback loop darkens each repeat; old version had ldDly.gain 0.04 inside
+// the loop, so echoes sat ~36 dB under the lead (inaudible)
+ldDry => DelayL ldDly => LPF ldDlyF => Gain ldDlyFb => ldDly;
+ldDlyF => Gain ldDlyOut => master;
 (stepDur * 3) => ldDly.max => ldDly.delay;
 0.40 => ldDlyFb.gain;
-0.04 => ldDly.gain;
+1.0 => ldDly.gain;
+0.5 => ldDlyOut.gain;
 2800.0 => ldDlyF.freq;
 
 // ============ STAB (chord hits, with reverb tail) ============
@@ -408,6 +475,7 @@ fun void readState() {
         0 => phraseRepeat;
         for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
         progs[progIdx][0] => chordRoot;
+        0 => motifVarOff; 0 => arrOff; scales[scaleType].cap() => scaleLen;
         generateMotif();
         }
 
@@ -436,7 +504,7 @@ fun void readState() {
                     0 => introBar;
                     if((seed * 3 + newSeed) % 2 == 0) 2 => introLen;
                     else 4 => introLen;
-                    2000.0 => fxHPF.freq;
+                    2000.0 => fxHPF.freq; 2000.0 => fxHPFTarget;
                 }
             }
 
@@ -454,10 +522,10 @@ fun void readState() {
                 0.10 => subG.gain;
             }
             if(energy >= 2) {
-                0.06 => reeseG.gain;
-                0.06 => stabG.gain;
+                0.09 => reeseLvl;
+                0.12 => stabG.gain;
             } else {
-                0.0 => reeseG.gain;
+                0.0 => reeseLvl;
                 0.0 => padAmpTarget;
                 0.0 => stabG.gain;
             }
@@ -536,6 +604,11 @@ while(true) {
         if(phraseBar >= 16) {
             0 => phraseBar;
             phraseRepeat + 1 => phraseRepeat;
+            // Track evolution: alternate the motif's bar-2 variation and rotate
+            // the arrangement template, so consecutive 16-bar blocks differ
+            phraseRepeat % 2 => motifVarOff;
+            phraseRepeat => arrOff;
+            if(motifGenerated) generateMotif();
             for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
             if(phraseRepeat % 3 == 2 && energy >= 2) {
                 (seed * 13 + phraseRepeat) % 4 => int subIdx;
@@ -547,13 +620,17 @@ while(true) {
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
         progs[progIdx][chordIdx] => chordRoot;
         if(chordSub[chordIdx] >= 0) chordSub[chordIdx] => chordRoot;
+        // Minor 7-note scales: ii is diminished (tritone under the whole
+        // lead) — play bVII instead, the idiomatic minor-DnB move
+        if(scales[scaleType].cap() == 7 && chordRoot % 7 == 1) 6 => chordRoot;
+        updateCurScale();
 
         // Energy decay
         if(barsSinceEvent > 6 && energy > 0 && transition == 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
             if(energy < 2) {
-                0.0 => reeseG.gain;
+                0.0 => reeseLvl;
                 0.0 => padAmpTarget;
                 0.0 => stabG.gain;
             }
@@ -582,13 +659,13 @@ while(true) {
             if(introBar > introLen) {
                 // DROP — breakbeats land
                 0 => introActive;
-                20.0 => fxHPF.freq;
+                20.0 => fxHPFTarget;
                 0.18 => rvMix.gain;
                 0.35 => rvFb1.gain; 0.33 => rvFb2.gain;
             } else {
                 introBar $ float / introLen $ float => float p;
                 // HPF sweeps down: dramatic DnB filter open
-                2000.0 * (1.0 - p) * (1.0 - p) + 20.0 => fxHPF.freq;
+                2000.0 * (1.0 - p) * (1.0 - p) + 20.0 => fxHPFTarget;
                 // Reverb wash: spacey anticipation
                 0.28 => rvMix.gain;
                 0.42 => rvFb1.gain; 0.40 => rvFb2.gain;
@@ -612,7 +689,7 @@ while(true) {
                 fxBar $ float / fxLen $ float => float p;
                 if(fxType == 1) {
                     // HPF sweep: DnB riser
-                    20.0 + p * p * 1500.0 => fxHPF.freq;
+                    20.0 + p * p * 1500.0 => fxHPFTarget;
                 } else if(fxType == 2) {
                     // Reverb wash: boost mix + feedback
                     0.18 + p * 0.12 => rvMix.gain;
@@ -621,7 +698,7 @@ while(true) {
                 } else if(fxType == 3) {
                     // Delay feedback swell
                     0.40 + p * 0.25 => ldDlyFb.gain;
-                    0.04 + p * 0.03 => ldDly.gain;
+                    0.5 + p * 0.25 => ldDlyOut.gain;
                 }
             }
         }
@@ -630,7 +707,7 @@ while(true) {
             if(rvFb1.gain() > 0.36) rvFb1.gain() * 0.95 + 0.35 * 0.05 => rvFb1.gain;
             if(rvFb2.gain() > 0.34) rvFb2.gain() * 0.95 + 0.33 * 0.05 => rvFb2.gain;
             if(ldDlyFb.gain() > 0.41) ldDlyFb.gain() * 0.95 + 0.40 * 0.05 => ldDlyFb.gain;
-            if(ldDly.gain() > 0.041) ldDly.gain() * 0.95 + 0.04 * 0.05 => ldDly.gain;
+            if(ldDlyOut.gain() > 0.51) ldDlyOut.gain() * 0.95 + 0.5 * 0.05 => ldDlyOut.gain;
         }
     }
 
@@ -669,6 +746,7 @@ while(true) {
             if(useSamples) { 0 => smpKick.pos; kVel * 0.30 => smpKickG.gain; }
             kVel * 0.8 => kickOsc.gain;
             kVel * 0.3 => kickClick.gain;
+            0.25 => kickDuck;
             if(useSamples) { kickOsc.gain() * 0.3 => kickOsc.gain; kickClick.gain() * 0.3 => kickClick.gain; }
             kickClickEnv.keyOn();
         }
@@ -678,23 +756,26 @@ while(true) {
     0 => int snHit;
     if(variant == 0 && snPatA[energy][s]) 1 => snHit;
     if(variant == 1 && snPatB[energy][s]) 1 => snHit;
+    // Snare was ~26 dB under the kick (RMS) — the break was inaudible.
     if(snHit) {
-        if(useSamples) { 0 => smpSnare.pos; 0.15 + 0.10 * snVel[s] => smpSnareG.gain; }
-        0.08 + 0.04 * snVel[s] => snG.gain;
-        if(useSamples) snG.gain() * 0.3 => snG.gain;
-        snEnv.keyOn();
+        if(s == 4 || s == 12) {
+            if(useSamples) { 0 => smpSnare.pos; 0.15 + 0.10 * snVel[s] => smpSnareG.gain; }
+            snareHit(0.34 + 0.12 * snVel[s]);
+        } else {
+            // off-backbeat break hits are accents, not a second backbeat
+            if(useSamples) { 0 => smpSnareGhost.pos; 0.10 => smpSnareGhostG.gain; }
+            snareHit(0.18 + 0.10 * snVel[s]);
+        }
     } else if(snGhost[energy][s]) {
         if(useSamples) { 0 => smpSnareGhost.pos; 0.06 => smpSnareGhostG.gain; }
-        0.03 => snG.gain;
-        if(useSamples) snG.gain() * 0.3 => snG.gain;
-        snEnv.keyOn();
+        snareHit(0.15);
     }
 
     // ---- HATS (with velocity) ----
     if(hatFill) {
         (s $ float) / 16.0 => float fillVel;
         if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * fillVel => smpHatG.gain; }
-        0.03 + 0.05 * fillVel => chG.gain;
+        0.05 + 0.10 * fillVel => chG.gain;
         if(useSamples) chG.gain() * 0.3 => chG.gain;
         chEnv.keyOn();
         if(s % 2 == 0) {
@@ -704,13 +785,13 @@ while(true) {
     } else {
         if(chPat[energy][s]) {
             if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * hatVel[s] => smpHatG.gain; }
-            0.02 + 0.05 * hatVel[s] => chG.gain;
+            0.04 + 0.10 * hatVel[s] => chG.gain;
             if(useSamples) chG.gain() * 0.3 => chG.gain;
             chEnv.keyOn();
         }
         if(ohPat[energy][s]) {
             if(useSamples) { 0 => smpHatOpen.pos; 0.06 + 0.08 * hatVel[s] => smpHatOpenG.gain; }
-            0.02 + 0.04 * hatVel[s] => ohG.gain;
+            0.04 + 0.07 * hatVel[s] => ohG.gain;
             if(useSamples) ohG.gain() * 0.3 => ohG.gain;
             ohEnv.keyOn();
         }
@@ -720,12 +801,11 @@ while(true) {
     if(energy >= 2) {
         (seed + phraseBar * 7) % 8 => int drumVar;
         if(drumVar < 3 && s == 9 && !chPat[energy][s]) {
-            0.015 => chG.gain;
+            0.035 => chG.gain;
             chEnv.keyOn();
         }
-        if(drumVar >= 5 && s == 7 && !snGhost[energy][s]) {
-            0.025 => snG.gain;
-            snEnv.keyOn();
+        if(drumVar >= 5 && s == 7 && !snGhost[energy][s] && !snHit) {
+            snareHit(0.13);
         }
     }
 
@@ -734,17 +814,17 @@ while(true) {
         if(drumFill == 2) {
             // Big fill (end of 16-bar phrase): classic breakbeat snare roll
             if(s >= 4 && s % 2 == 0 && !snHit && !snGhost[energy][s]) {
-                0.04 + (s $ float) / 16.0 * 0.06 => snG.gain;
-                snEnv.keyOn();
+                snareHit(0.12 + (s $ float) / 16.0 * 0.30);
             }
             // Rapid-fire hats in second half
             if(s >= 8 && !hatFill) {
-                0.02 + (s $ float) / 16.0 * 0.04 => chG.gain;
+                0.04 + (s $ float) / 16.0 * 0.08 => chG.gain;
                 chEnv.keyOn();
             }
             // Ghost kick on 10, 14 for extra momentum
             if((s == 10 || s == 14) && !kickMuted) {
                 0.0 => kickPh;
+                0.5 => kickDuck;
                 0.4 => kickOsc.gain;
                 0.15 => kickClick.gain;
                 kickClickEnv.keyOn();
@@ -752,8 +832,7 @@ while(true) {
         } else {
             // Small fill (end of 4-bar chord): snare ghosts in last quarter
             if(s >= 12 && s % 2 == 0 && !snHit && !snGhost[energy][s]) {
-                0.035 => snG.gain;
-                snEnv.keyOn();
+                snareHit(0.15);
             }
         }
     }
@@ -764,25 +843,45 @@ while(true) {
     if(energy < 2) { if(arrLevel > 1) 1 => arrLevel; }
 
     // ---- SUB BASS (cell-derived, follows arrangement) ----
+    if(bassHold > 0) {
+        bassHold - 1 => bassHold;
+        if(bassHold == 0) { subEnv.keyOff(); reeseEnv.keyOff(); }
+    }
     if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
+        0.15 => subAmpTarget;
+        if(energy >= 2 && arrLevel >= 2) 0.09 => reeseLvl; else 0.0 => reeseLvl;
         bassLine[phraseStep % PHRASE_LEN] => int bDeg;
         if(bDeg >= 0) {
-            (bDeg + chordRoot) % 5 => bDeg;
-            if(bDeg < 0) bDeg + 5 => bDeg;
-            Std.mtof(note(bDeg, 1)) => subOsc.freq;
-            0.15 => subAmpTarget;
-            // Reese follows bass root
-            Std.mtof(note(bDeg, 2)) => reese1.freq;
-            reese1.freq() * 1.008 => reese2.freq;
-            1200.0 + Math.random2f(0.0, 800.0) => reeseFiltTarget;
+            // Sub root folded into E1..D#2 (41-78 Hz): audible on real
+            // systems, under the kick's body. Old note(x,1) put it at 16-46 Hz.
+            fold(key + sdeg(chordRoot), 28) => int bRoot;
+            chordNote(bDeg, 28) => int bm;
+            if(bm > bRoot + 7) bm - 12 => bm;
+            if(bm < 26) bm + 12 => bm;
+            Std.mtof(bm) => subOsc.freq;
+            // Reese an octave up, detuned saws
+            Std.mtof(bm + 12) => reese1.freq;
+            reese1.freq() * 1.007 => reese2.freq;
+            700.0 + Math.random2f(0.0, 900.0) => reeseFiltTarget;
+            // Note length: up to the next bass note minus a step (max 6)
+            1 => int gap;
+            while(gap < 16 && bassLine[(phraseStep + gap) % PHRASE_LEN] < 0) gap + 1 => gap;
+            gap - 1 => bassHold;
+            if(bassHold > 6) 6 => bassHold;
+            if(bassHold < 1) 1 => bassHold;
+            subEnv.keyOn(); reeseEnv.keyOn();
         }
+    } else {
+        0.0 => subAmpTarget;
+        0.0 => reeseLvl;
     }
 
     // ---- PAD (atmospheric, follows arrangement + phrase dynamics) ----
     if(transition != 4 && s == 0 && arrLevel >= 2) {
-        Std.mtof(note(chordRoot, 3)) => float p1;
-        Std.mtof(note(chordRoot + 2, 3)) => float p2;
-        Std.mtof(note(chordRoot + 4, 3)) => float p3;
+        // Close-voiced in G3..F#4: out of the reese's way, smooth voice leading
+        Std.mtof(fold(chordNote(0, 0), 55)) => float p1;
+        Std.mtof(fold(chordNote(2, 0), 55)) => float p2;
+        Std.mtof(fold(chordNote(4, 0), 55)) => float p3;
         p1 * 0.997 => pad1a.freq; p1 * 1.003 => pad1b.freq;
         p2 * 0.997 => pad2a.freq; p2 * 1.003 => pad2b.freq;
         p3 * 0.998 => pad3a.freq; p3 * 1.002 => pad3b.freq;
@@ -798,19 +897,24 @@ while(true) {
     }
 
     // ---- LEAD (4-bar motif, follows arrangement) ----
+    if(ldHold > 0) {
+        ldHold - 1 => ldHold;
+        if(ldHold == 0) ldEnv.keyOff();
+    }
     if(transition != 4 && motifGenerated && arrLevel >= 3) {
+        0.16 => ldAmpTarget;
         motif[phraseStep % PHRASE_LEN] => int deg;
         // Motif variation per repetition
         phraseBar / 4 => int motifRep;
         if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => deg;
         if(motifRep == 3 && deg >= 0 && phraseStep % 8 == 6) deg - 1 => deg;
         if(deg >= 0) {
-            (deg + chordRoot) % 5 => deg;
-            if(deg < 0) deg + 5 => deg;
-            4 => int ldOct;
-            if(energy >= 3 && phraseStep >= 32) 5 => ldOct;
-            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) 5 => ldOct;
-            Std.mtof(note(deg, ldOct)) => ldCarr.freq;
+            // Chord root folded into C4..B4, motif intervals relative to it
+            chordNote(deg, 60) => int lm;
+            // Rep 2: only the bar-3 peak notes jump the octave (whole-bar
+            // jumps made 12-19 semitone leaps in and out of the bar)
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48 && deg >= 3 && lm + 12 <= 86) lm + 12 => lm;
+            Std.mtof(lm) => ldCarr.freq;
             // Mod ratio 3:2 = glassy bell
             ldCarr.freq() * 1.5 => ldMod.freq;
             // Vary mod depth per note for timbral movement
@@ -823,7 +927,10 @@ while(true) {
             if(phraseStep >= 32 && phraseStep < 48) ldVel * 1.2 => ldVel;
             if(phraseStep >= 48) ldVel * 0.7 => ldVel;
             2400.0 + Math.random2f(0.0, 600.0) => ldFiltTarget;
-            ldVel => ldAmpTarget;
+            // Articulated note: velocity on the carrier, envelope per note
+            ldVel * 12.0 => ldCarr.gain;
+            ldEnv.keyOn();
+            2 => ldHold;
         }
     } else if(arrLevel < 3) {
         0.0 => ldAmpTarget;
@@ -836,11 +943,13 @@ while(true) {
     }
 
     // ---- STAB (chord hits, follows progression) ----
-    if(energy >= 2 && transition == 0) {
-        if(s == 2 || s == 10 || (energy >= 3 && s == 6)) {
-            Std.mtof(note(chordRoot, 4)) => stab1.freq;
-            Std.mtof(note(chordRoot + 2, 4)) => stab2.freq;
-            Std.mtof(note(chordRoot + 4, 4)) => stab3.freq;
+    // Stabs answer the pad on the 2nd and 4th bar of each chord only — an
+    // every-bar stab on 2/10 was the loudest loop in the track.
+    if(energy >= 2 && transition == 0 && arrLevel >= 2 && phraseBar % 2 == 1) {
+        if(s == 2 || s == 10 || (energy >= 3 && s == 7)) {
+            Std.mtof(fold(chordNote(0, 0), 62)) => stab1.freq;
+            Std.mtof(fold(chordNote(2, 0), 62)) => stab2.freq;
+            Std.mtof(fold(chordNote(4, 0), 62)) => stab3.freq;
             2500.0 => stabFilt.freq;
             stabEnv.keyOn();
         }
@@ -874,8 +983,11 @@ while(true) {
         riserBP.freq() + (riserFreqTarget - riserBP.freq()) * 0.05 => riserBP.freq;
 
         // Sub bass
+        kickDuck + (1.0 - kickDuck) * 0.12 => kickDuck;
         subAmpCurrent + (subAmpTarget - subAmpCurrent) * 0.05 => subAmpCurrent;
-        subAmpCurrent => subG.gain;
+        subAmpCurrent * kickDuck => subG.gain;
+        reeseCur + (reeseLvl - reeseCur) * 0.03 => reeseCur;
+        reeseCur * (0.5 + 0.5 * kickDuck) => reeseG.gain;
         if(subAmpTarget > 0.01) subAmpTarget * 0.995 => subAmpTarget;
 
         // Reese filter
@@ -903,7 +1015,6 @@ while(true) {
         // Lead — FM envelope: mod depth drifts for evolving timbre
         ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.04 => ldAmpCurrent;
         ldAmpCurrent => ldDry.gain;
-        if(ldAmpTarget > 0.003) ldAmpTarget * 0.990 => ldAmpTarget;
         ldFilt.freq() + (ldFiltTarget - ldFilt.freq()) * 0.03 => ldFilt.freq;
         if(ldFiltTarget > 800.0) ldFiltTarget * 0.998 => ldFiltTarget;
         // FM mod depth decays toward target, with slow LFO drift
@@ -914,7 +1025,8 @@ while(true) {
         if(stabFilt.freq() > 800.0) stabFilt.freq() * 0.998 => stabFilt.freq;
 
         // FX: smooth HPF back toward 20Hz when not active (skip during intro + HPF sweep)
-        if(fxType != 1 && !introActive) fxHPF.freq() + (20.0 - fxHPF.freq()) * 0.04 => fxHPF.freq;
+        if(fxType != 1 && !introActive) 20.0 => fxHPFTarget;
+        fxHPF.freq() + (fxHPFTarget - fxHPF.freq()) * 0.08 => fxHPF.freq;
 
         // Master
         masterGain + (masterTarget - masterGain) * 0.02 => masterGain;

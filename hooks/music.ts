@@ -89,7 +89,9 @@ const SCALE_NAMES: Record<string, string> = {
   '0,1,3,7,10': 'phrygian (5-note)',
   '0,1,4,7,8': 'phrygian dominant (5-note)',
   '0,3,7,8,11': 'harmonic minor (5-note)',
-  '0,1,4,7,10': 'phrygian dominant',
+  '0,1,4,7,10': 'phrygian dominant (5-note)',
+  '0,1,4,5,7,8,10': 'phrygian dominant',
+  '0,2,3,5,7,9,11': 'melodic minor',
 }
 
 export function scaleName(intervals: readonly number[]): string {

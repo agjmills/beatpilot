@@ -137,12 +137,42 @@ if(smpTest.open(smpDir + "triangle.wav", FileIO.READ)) {
 // 3: phrygian (ominous — half-step root, Zimmer territory)
 // 4: minor (natural)
 // 5: whole-half diminished (maximum tension)
-[[0,2,4,7,9], [0,3,5,7,10], [0,2,3,5,7,8,11], [0,1,3,5,7,8,10], [0,2,3,5,7,8,10], [0,1,3,4,6,7,9,10]] @=> int scales[][];
+[[0,2,4,7,9], [0,3,5,7,10], [0,2,3,5,7,8,11], [0,1,3,5,7,8,10], [0,2,3,5,7,8,10], [0,1,3,4,6,7,9,10], [0,2,4,5,7,9,11]] @=> int scales[][];
+// 6: major (warm, real triads)
 
 fun int note(int degree, int octave) {
     scales[scaleType] @=> int scl[];
-    if(degree < 0) return 0;
-    return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
+    scl.cap() => int n;
+    degree / n => int oct;
+    degree % n => int d;
+    if(d < 0) { d + n => d; oct - 1 => oct; }
+    return key + octave * 12 + scl[d] + oct * 12;
+}
+
+// Voice-led triad: move each voice to the nearest tone of the new chord
+// (all 3 chord tones covered), kept inside lo..hi. Writes MIDI into v[].
+fun void voiceLead(int v[], int root, int lo, int hi) {
+    int t[3];
+    for(0 => int i; i < 3; i++) note(root + 2 * i, 0) % 12 => t[i];
+    [[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]] @=> int perms[][];
+    999999 => int best; int bv[3];
+    for(0 => int p; p < 6; p++) {
+        0 => int cost; int cv[3];
+        for(0 => int i; i < 3; i++) {
+            t[perms[p][i]] => int pc;
+            // nearest pitch with this pitch class to the old voice
+            v[i] - ((v[i] - pc) % 12 + 12) % 12 => int c;
+            if(v[i] - c > 6) c + 12 => c;
+            while(c < lo) c + 12 => c;
+            while(c > hi) c - 12 => c;
+            c => cv[i];
+            Math.abs(c - v[i]) +=> cost;
+        }
+        // avoid unisons between voices
+        if(cv[0] == cv[1] || cv[1] == cv[2] || cv[0] == cv[2]) 100 +=> cost;
+        if(cost < best) { cost => best; for(0 => int i; i < 3; i++) cv[i] => bv[i]; }
+    }
+    for(0 => int i; i < 3; i++) bv[i] => v[i];
 }
 
 // ============ DRONE (layered: FM + warm TriOsc) ============
@@ -186,6 +216,12 @@ TriOsc pad3b => padFilt;
 1200.0 => float padFiltTarget;
 0.0 => float padLfoPhase;
 0.0 => float padBreathPhase;
+[55, 59, 62] @=> int padV[];  // voice-led pad voices (MIDI), moved by voiceLead()
+float padF[3]; float padT[3];  // current / target base freq per pad voice
+float shimF[3]; float shimT[3];
+-99 => int voicedRoot;         // chordRoot the pad + shimmer are currently voiced for
+0.0 => float droneT; 0.0 => float subT; // drone/sub glide targets (Hz)
+0 => int arrLvl;               // effective arrangement level (mask + energy)
 
 // ============ SHIMMER (chord cluster, not single tone) ============
 SinOsc shim1 => LPF shimFilt => Gain shimG => master;
@@ -211,15 +247,31 @@ TriOsc str2b => strFilt;
 0.0 => float strAmpCurrent;
 0.0 => float strFiltTarget;
 1800.0 => strFiltTarget;
--1 => int lastStrDeg;
+0.0 => float strF1; 0.0 => float strF2; 0.0 => float strT1; 0.0 => float strT2;
 
 // ============ ARPEGGIO (sparse plucks with longer delay wash) ============
-SinOsc arp => LPF arpFilt => Gain arpG => master;
-800.0 => arpFilt.freq; 0.7 => arpFilt.Q;
+// Two round-robin voices (detuned sine pairs) so a ringing note is never
+// re-pitched mid-sound; soft attack, ~3s bell decay, dotted-quarter echoes.
+Gain arpBus => LPF arpFilt => Gain arpG => master;
+SinOsc arpA[2]; SinOsc arpB[2]; Gain arpEnvG[2];
+float arpEnv[2]; float arpPeak[2]; int arpAtk[2];
+for(0 => int i; i < 2; i++) {
+    arpA[i] => arpEnvG[i]; arpB[i] => arpEnvG[i]; arpEnvG[i] => arpBus;
+    0.5 => arpA[i].gain; 0.5 => arpB[i].gain; 0.0 => arpEnvG[i].gain;
+}
+0 => int arpVoice;
+2400.0 => arpFilt.freq; 0.6 => arpFilt.Q;
 0.0 => arpG.gain;
+// Lead delay: dotted quarter, darkened feedback
+arpG => DelayL leadDly => LPF leadLP => Gain leadFb => leadDly;
+leadLP => Gain leadOut => master;
+(60.0 / BPM * 0.75)::second => leadDly.max => leadDly.delay;
+1800.0 => leadLP.freq; 0.45 => leadFb.gain; 0.55 => leadOut.gain;
 0.0 => float arpAmpTarget;
 0.0 => float arpAmpCurrent;
--1 => int lastArpDeg;
+5 => int melOct;   // melody octave, chosen per chord to keep it in ~C4-C6
+-99 => int lastStrNote;
+-99 => int lastMelNote;
 
 // ============ TEXTURE (filtered noise breath) ============
 Noise texN => BPF texBP => Gain texG => master;
@@ -245,15 +297,15 @@ fun void generateArrangement() {
     seed % 3 => int arrType;
     if(arrType == 0) {
         // Gradual build: drone only -> full, then reset
-        [0, 0, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 2, 2, 1, 0] @=> int gb[];
+        [0, 0, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 2, 2, 1, 1] @=> int gb[];
         for(0 => int i; i < 16; i++) gb[i] => arrangement[i];
     } else if(arrType == 1) {
         // Wave: builds, strips, builds again
-        [0, 1, 2, 3, 3, 2, 1, 0, 0, 1, 2, 3, 3, 3, 2, 1] @=> int wv[];
+        [1, 1, 2, 2, 3, 3, 3, 3, 1, 1, 2, 2, 3, 3, 3, 3] @=> int wv[];
         for(0 => int i; i < 16; i++) wv[i] => arrangement[i];
     } else {
         // Sparse: mostly minimal with occasional full moments
-        [0, 0, 0, 1, 0, 0, 1, 2, 0, 0, 0, 3, 2, 1, 0, 0] @=> int sp[];
+        [0, 0, 1, 1, 2, 2, 2, 2, 0, 1, 1, 2, 3, 3, 3, 3] @=> int sp[];
         for(0 => int i; i < 16; i++) sp[i] => arrangement[i];
     }
 }
@@ -262,40 +314,83 @@ fun void generateArrangement() {
 // Places chord tones at musical positions across 64 steps (4 bars x 16 steps)
 // Sparse: 2-3 notes per bar, consonant with each chord
 fun void generateArp() {
-    // Clear
-    for(0 => int i; i < 64; i++) -1 => arpLine[i];
-
-    // For each of the 4 bars (each bar = 16 steps, each bar has its own chord)
-    for(0 => int bar; bar < 4; bar++) {
-        bar * 16 => int barStart;
-        progs[progIdx][bar % progs[progIdx].cap()] => int root;
-
-        // Chord tones: root, 3rd, 5th relative to chord root in the scale
-        [root, root + 2, root + 4] @=> int tones[];
-
-        // Seed-derived pattern: pick 2-3 positions per bar
-        // Use seed bits to vary which steps get notes
-        (seed + bar * 37) => int barSeed;
-
-        // Position 1: early in the bar (step 1-4)
-        1 + (barSeed % 4) => int pos1;
-        tones[barSeed % 3] => int tone1;
-        tone1 => arpLine[barStart + pos1];
-
-        // Position 2: mid-bar (step 7-11)
-        7 + ((barSeed / 3) % 5) => int pos2;
-        tones[(barSeed / 5) % 3] => int tone2;
-        // Avoid repeating the same tone
-        if(tone2 == tone1) tones[(tone2 + 1) % 3] => tone2;
-        tone2 => arpLine[barStart + pos2];
-
-        // Position 3: only on some bars (seed-dependent), late (step 12-14)
-        if((barSeed % 5) < 3) {
-            12 + ((barSeed / 7) % 3) => int pos3;
-            tones[(barSeed / 11) % 3] => int tone3;
-            tone3 => arpLine[barStart + pos3];
-        }
+    // Cell-based 4-bar phrase, stored as scale degrees RELATIVE to chordRoot
+    // (-99 = rest) so it follows the harmony. Wide ambient spacing.
+    for(0 => int i; i < 64; i++) -99 => arpLine[i];
+    [0, 2, 4, 2] @=> int startPool[];
+    [1, 2, -1, 2, 1, -2] @=> int leapPool[];
+    [-1, 0, 1, -1, 0] @=> int resPool[];
+    [[0, 6, 10], [0, 4, 10], [2, 8, 12], [0, 8, 12]] @=> int rhy[][];
+    startPool[seed % 4] => int c0;
+    leapPool[(seed / 4) % 6] => int leap1;
+    resPool[(seed / 24) % 5] => int resolve;
+    c0 + leap1 => int c1;
+    c1 + resolve => int c2;
+    rhy[(seed / 3) % 4] @=> int r[];
+    (seed / 7) % 3 => int varType;
+    // Bar 1: statement
+    c0 => arpLine[r[0]]; c1 => arpLine[r[1]]; c2 => arpLine[r[2]];
+    // Bar 2: variation (up a 3rd / inverted / retrograde)
+    if(varType == 0) {
+        c0 + 2 => arpLine[16 + r[0]]; c1 + 2 => arpLine[16 + r[1]]; c2 + 2 => arpLine[16 + r[2]];
+    } else if(varType == 1) {
+        c0 => arpLine[16 + r[0]]; c0 - leap1 => arpLine[16 + r[1]]; c0 - leap1 - resolve => arpLine[16 + r[2]];
+    } else {
+        c2 => arpLine[16 + r[0]]; c1 => arpLine[16 + r[1]]; c0 => arpLine[16 + r[2]];
     }
+    // Bar 3: cell higher, then an approach note from below into bar 4
+    c0 + 2 => arpLine[32 + r[0]]; c1 + 2 => arpLine[32 + r[1]]; c2 + 2 => arpLine[32 + r[2]];
+    c0 - 1 => arpLine[32 + 14];
+    // Bar 4: half the cell, resolve to the chord root
+    c0 => arpLine[48]; c1 => arpLine[48 + r[1]]; 0 => arpLine[48 + 12];
+}
+
+// Effective arrangement level: the mask, shaped by energy
+// (energy 1 = no melody, energy 3 = one layer richer, energy 0 = drone + sub)
+fun int effLevel(int bar) {
+    if(bar < 0 || bar > 15) return 0;
+    arrangement[bar] => int lv;
+    if(energy >= 3) lv + 1 => lv;
+    if(energy == 1 && lv > 2) 2 => lv;
+    if(energy == 0 && lv > 1) 1 => lv;
+    if(lv > 3) 3 => lv;
+    return lv;
+}
+
+// 1 if a melody pitch is a non-chord tone a semitone from a chord tone
+// (a b9 against the sustained pad rings for seconds with sine bells)
+fun int clashes(int midi) {
+    for(0 => int i; i < 3; i++) {
+        note(chordRoot + 2 * i, 0) % 12 => int pc;
+        ((midi - pc) % 12 + 12) % 12 => int d;
+        if(d == 0) return 0;
+    }
+    for(0 => int i; i < 3; i++) {
+        note(chordRoot + 2 * i, 0) % 12 => int pc;
+        ((midi - pc) % 12 + 12) % 12 => int d;
+        if(d == 1 || d == 11) return 1;
+    }
+    return 0;
+}
+
+// Re-voice pad + shimmer for the current chord (voice-led), drone/sub targets
+fun void voiceChord() {
+    if(chordRoot == voicedRoot) return;
+    chordRoot => voicedRoot;
+    voiceLead(padV, chordRoot, 50, 70);
+    for(0 => int i; i < 3; i++) {
+        Std.mtof(padV[i]) => padT[i];
+        Std.mtof(padV[i] + 12) => shimT[i];
+        if(padF[i] < 1.0) { padT[i] => padF[i]; shimT[i] => shimF[i]; }
+    }
+    Std.mtof(note(chordRoot, 3)) => droneT;
+    Std.mtof(note(chordRoot, 2)) => subT;
+    if(droneCarr.freq() < 21.0 || masterGain < 0.001) {
+        droneT => droneCarr.freq; subT => subDrone.freq;
+    }
+    if(note(chordRoot, 5) > 72) 4 => melOct; else 5 => melOct;
+    // Sustaining strings follow the pad's voice-leading instead of hanging over
+    if(strAmpCurrent > 0.001) { Std.mtof(padV[1]) => strT1; Std.mtof(padV[2]) => strT2; }
 }
 
 // ============ STATE FILE READER ============
@@ -321,12 +416,16 @@ fun void readState() {
         newSeed % 256 => seed;
         seed % progs.cap() => progIdx;
         // Dark progressions (idx 2-5) use dark scales
+        // (seed / 6) decouples the scale from progIdx (= seed % 6).
+        // Diminished (5) is left out: all-diminished triads for minutes is noise, not dread.
         if(progIdx >= 2) {
             1 => mood;
-            2 + (seed % 4) => scaleType; // harmonic minor, phrygian, minor, diminished
+            [2, 3, 4] @=> int dark[];
+            dark[(seed / 6) % 3] => scaleType; // harmonic minor, phrygian, natural minor
         } else {
             0 => mood;
-            seed % 2 => scaleType; // pentatonic major/minor
+            [0, 1, 6] @=> int warm[];
+            warm[(seed / 6) % 3] => scaleType; // pentatonic major/minor, major
         }
         -1 => phraseBar; // the advance below lands it on bar 0
         0 => chordIdx;
@@ -338,6 +437,8 @@ fun void readState() {
         // Generate arp pattern and arrangement from seed
         generateArp();
         generateArrangement();
+        -99 => voicedRoot; // new key/scale: re-voice even if the root degree is unchanged
+        voiceChord();
         }
 
         if(newTs != lastEventTs && newTs > 0) {
@@ -367,16 +468,13 @@ fun void readState() {
                 0 => autoSectionBar;
             }
 
-            // Drone always on — set pitch to chord root
+            // Drone always on — pitch glides to the chord root (substep loop)
             0.06 => droneAmpTarget;
-            Std.mtof(note(chordRoot, 2)) => droneCarr.freq;
-            droneCarr.freq() * 1.5 => droneMod.freq;
-            droneCarr.freq() * 0.998 => droneWarm1.freq;
-            droneCarr.freq() * 1.002 => droneWarm2.freq;
-            Std.mtof(note(chordRoot, 1)) => subDrone.freq;
+            voiceChord();
 
             // Arrangement mask gates initial layer targets
-            arrangement[0] => int initArr;
+            effLevel(phraseBar) => int initArr;
+            if(phraseBar < 0) effLevel(0) => initArr;
             if(initArr >= 1) 0.05 => subAmpTarget;
             else 0.0 => subAmpTarget;
             if(initArr >= 2) {
@@ -463,7 +561,9 @@ while(true) {
             if(phraseRepeat % 3 == 2 && energy >= 2) {
                 (seed * 13 + phraseRepeat) % 4 => int subIdx;
                 // Deceptive resolution: up 5 degrees
-                (progs[progIdx][subIdx] + 5) % 7 => chordSub[subIdx];
+                // (+5 in a 7-note scale; +3 in pentatonic — +5 there is just the octave)
+                scales[scaleType].cap() => int sn;
+                (progs[progIdx][subIdx] + sn - 2) % sn => chordSub[subIdx];
             }
         }
         phraseBar / 4 => chordIdx;
@@ -472,7 +572,9 @@ while(true) {
         if(chordSub[chordIdx] >= 0) chordSub[chordIdx] => chordRoot;
 
         // ---- ARRANGEMENT GATING: control which layers are active ----
-        arrangement[phraseBar] => int arrLevel;
+        effLevel(phraseBar) => arrLvl;
+        arrLvl => int arrLevel;
+        voiceChord();
         // Drone is always on
         // Sub: arrangement >= 1
         if(arrLevel >= 1) {
@@ -486,6 +588,7 @@ while(true) {
             if(chordBar < 2) 0.04 => padAmpTarget;      // bars 1-2: gentle swell
             else if(chordBar == 2) 0.07 => padAmpTarget; // bar 3: peak
             else 0.03 => padAmpTarget;                     // bar 4: pull back
+            if(energy >= 3) padAmpTarget * 1.3 => padAmpTarget;
             0.006 => texAmpTarget;
         } else {
             0.0 => padAmpTarget;
@@ -497,8 +600,7 @@ while(true) {
             0.03 => arpAmpTarget;
         } else {
             0.0 => shimAmpTarget;
-            // Don't kill arp target mid-note, let it decay naturally
-            if(arpAmpCurrent < 0.002) 0.0 => arpAmpTarget;
+            0.0 => arpAmpTarget; // layer gate fades; ringing notes + echoes tail off
         }
 
         // Energy decay
@@ -569,63 +671,64 @@ while(true) {
         }
     }
 
-    // ---- DRONE PITCH: follow chord root smoothly ----
-    if(s == 0 && energy >= 0) {
-        Std.mtof(note(chordRoot, 2)) => float drTarget;
-        droneCarr.freq() + (drTarget - droneCarr.freq()) * 0.05 => droneCarr.freq;
-        droneCarr.freq() * 1.5 => droneMod.freq;
-        droneCarr.freq() * 0.998 => droneWarm1.freq;
-        droneCarr.freq() * 1.002 => droneWarm2.freq;
-        Std.mtof(note(chordRoot, 1)) => float subTarget;
-        subDrone.freq() + (subTarget - subDrone.freq()) * 0.05 => subDrone.freq;
-    }
+    // ---- DRONE / PAD / SHIMMER pitches: voiced at the bar (voiceChord), glide in substeps ----
 
-    // ---- PAD CHORD: follows progression, set on chord change ----
-    if(arrangement[phraseBar] >= 2 && s == 0 && phraseBar % 4 == 0) {
-        Std.mtof(note(chordRoot, 3)) => float p1;
-        Std.mtof(note(chordRoot + 2, 3)) => float p2;
-        Std.mtof(note(chordRoot + 4, 3)) => float p3;
-        // Detuned pairs — slow drift applied in substep
-        p1 * 0.997 => pad1a.freq; p1 * 1.003 => pad1b.freq;
-        p2 * 0.997 => pad2a.freq; p2 * 1.003 => pad2b.freq;
-        p3 * 0.998 => pad3a.freq; p3 * 1.002 => pad3b.freq;
-        1400.0 + Math.random2f(0.0, 400.0) => padFiltTarget;
-    }
-
-    // ---- SHIMMER CLUSTER: triad an octave above pad ----
-    if(arrangement[phraseBar] >= 3 && s == 0 && phraseBar % 8 == 0) {
-        Std.mtof(note(chordRoot, 5)) => float s1;
-        Std.mtof(note(chordRoot + 2, 5)) => float s2;
-        Std.mtof(note(chordRoot + 4, 5)) => float s3;
-        s1 => shim1.freq;
-        s2 => shim2.freq;
-        s3 * 1.001 => shim3.freq; // tiny detune for width
-    }
-
-    // ---- ARPEGGIO: follows arpLine pattern instead of random dice ----
-    if(arpLine[phraseStep] >= 0 && arrangement[phraseBar] >= 3) {
-        arpLine[phraseStep] => int arpDeg;
-        // Arp variation per repetition
-        phraseBar / 4 => int motifRep;
-        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => arpDeg; // drop a note
-        if(motifRep == 3 && arpDeg >= 0 && phraseStep % 8 == 6) arpDeg - 1 => arpDeg; // approach
-        if(arpDeg >= 0 && (arpDeg != lastArpDeg || arpAmpCurrent < 0.004)) {
-            arpDeg => lastArpDeg;
-            3 + ((seed + phraseStep) % 2) => int arpOct;
-            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) arpOct + 1 => arpOct; // octave up
-            Std.mtof(note(arpDeg, arpOct)) => arp.freq;
-            0.025 => arpAmpTarget;
+    // ---- MELODY: cell phrase (relative to chordRoot), round-robin bell voices ----
+    phraseBar / 4 => int motifRep;
+    arpLine[phraseStep] => int rel;
+    // Rep 4 ornament: approach note (step below) into each bar-downbeat note
+    if(rel == -99 && motifRep == 3 && phraseStep % 16 == 14 && arpLine[(phraseStep + 2) % 64] > -99)
+        arpLine[(phraseStep + 2) % 64] - 1 => rel;
+    if(rel > -99 && arrLvl >= 3) {
+        phraseStep / 16 => int mBar;
+        1 => int play;
+        if(motifRep == 1 && (seed + phraseStep) % 5 == 0 && phraseStep != 60) 0 => play; // drop a note
+        if(play) {
+            melOct => int oct;
+            // Non-chord tone a semitone off the harmony: step to a neighbour degree
+            if(clashes(note(chordRoot + rel, oct))) {
+                note(chordRoot + rel - 1, oct) => int dn;
+                if(!clashes(dn) && dn != lastMelNote) rel - 1 => rel;
+                else if(!clashes(note(chordRoot + rel + 1, oct))) rel + 1 => rel;
+                else rel - 1 => rel;
+            }
+            note(chordRoot + rel, oct) => int mn;
+            if(motifRep == 2 && mBar == 2 && mn + 12 <= 86) mn + 12 => mn; // octave lift on the peak
+            mn => lastMelNote;
+            Std.mtof(mn) => float f;
+            arpVoice => int v;
+            1 - arpVoice => arpVoice;
+            f * 0.998 => arpA[v].freq; f * 1.002 => arpB[v].freq;
+            // contour: bar 3 peaks, bar 4 pulls back; ±5% humanize
+            [0.8, 0.85, 1.0, 0.7] @=> float cont[];
+            cont[mBar] + ((seed * 17 + stepCount) % 100 - 50) / 1000.0 => arpPeak[v];
+            1 => arpAtk[v];
+            // Strings: shadow a chord-tone melody note with a bowed 3rd-dyad,
+            // once in bars 1 and 3 of the phrase
+            scales[scaleType].cap() => int sn;
+            ((rel % sn) + sn) % sn => int rd;
+            if((rd == 0 || rd == 2 || rd == 4) && (mBar == 0 || mBar == 2) && phraseBar != lastStrNote) {
+                phraseBar => lastStrNote; // one bowed dyad per bar
+                Std.mtof(note(chordRoot + rel, oct - 1)) => float f1;
+                2 => int up; if(rd == 4) sn - 4 => up; // 5th -> root above, never the 7th
+                Std.mtof(note(chordRoot + rel + up, oct - 1)) => float f2;
+                f1 => strT1; f2 => strT2;
+                if(str1a.freq() < 21.0 || strAmpCurrent < 0.001) { f1 => strF1; f2 => strF2; }
+                0.022 => strAmpTarget;
+                2200.0 + Math.random2f(0.0, 600.0) => strFiltTarget;
+            }
         }
     }
+    if(arrLvl < 3) 0.0 => strAmpTarget;
 
     // ---- TEXTURE: noise breath, gated by arrangement ----
-    if(arrangement[phraseBar] >= 2 && s == 0 && Math.random2(0, 3) == 0) {
+    if(arrLvl >= 2 && s == 0 && Math.random2(0, 3) == 0) {
         300.0 + Math.random2f(0.0, 600.0) => texBP.freq;
         0.008 => texAmpTarget;
     }
 
     // ---- SAMPLE TEXTURES: occasional percussion accents ----
-    if(useSamples && arrangement[phraseBar] >= 2 && s == 0) {
+    if(useSamples && arrLvl >= 2 && s == 0) {
         (seed + phraseBar * 11) % 12 => int texRoll;
         if(texRoll == 0 && phraseBar % 4 == 0) {
             // Triangle hit on chord changes
@@ -636,30 +739,10 @@ while(true) {
         } else if(texRoll == 2 && phraseBar % 8 == 7) {
             // Sizzle cymbal at phrase boundaries
             0 => smpSizzle.pos; 0.025 => smpSizzleG.gain;
-        } else if(texRoll >= 3 && texRoll <= 4 && phraseBar % 2 == 0 && arrangement[phraseBar] >= 3) {
+        } else if(texRoll >= 3 && texRoll <= 4 && phraseBar % 2 == 0 && arrLvl >= 3) {
             // Gentle shaker on every other bar when full arrangement
             0 => smpShaker.pos; 0.02 => smpShakerG.gain;
         }
-    }
-
-    // ---- STRINGS: sparse cinematic melody, only at full arrangement ----
-    if(arrangement[phraseBar] >= 3 && arpLine[phraseStep] >= 0) {
-        arpLine[phraseStep] => int strDeg;
-        // Only play every 8th eligible note — very sparse
-        if((seed + phraseStep) % 8 == 0 && strDeg != lastStrDeg) {
-            strDeg => lastStrDeg;
-            // One octave above the arp, with a second voice a 5th above
-            4 + ((seed + phraseStep) % 2) => int strOct;
-            Std.mtof(note(strDeg, strOct)) => float f1;
-            Std.mtof(note(strDeg + 4, strOct)) => float f2; // a 5th up
-            f1 * 0.999 => str1a.freq; f1 * 1.001 => str1b.freq; // detuned pair
-            f2 * 0.998 => str2a.freq; f2 * 1.002 => str2b.freq;
-            0.025 => strAmpTarget;
-            // Filter opens slowly with each note
-            2200.0 + Math.random2f(0.0, 600.0) => strFiltTarget;
-        }
-    } else if(arrangement[phraseBar] < 3) {
-        0.0 => strAmpTarget;
     }
 
     // ---- Advance phraseStep (wraps at 64) ----
@@ -681,6 +764,14 @@ while(true) {
             300.0 + 150.0 * Math.sin(stepCount * 0.00025) => droneWF.freq;
         }
         droneMod.gain() + (droneModTarget - droneMod.gain()) * 0.002 => droneMod.gain;
+        // Pitch glide to the chord root (~2s), detuned pair with slow drift
+        if(droneT > 0.0) {
+            droneCarr.freq() + (droneT - droneCarr.freq()) * 0.06 => droneCarr.freq;
+            subDrone.freq() + (subT - subDrone.freq()) * 0.06 => subDrone.freq;
+        }
+        droneCarr.freq() * 1.5 => droneMod.freq;
+        droneCarr.freq() * 0.998 => droneWarm1.freq;
+        droneCarr.freq() * (1.002 + 0.0006 * Math.sin(stepCount * 0.0011)) => droneWarm2.freq;
 
         // Sub drone
         subAmpCurrent + (subAmpTarget - subAmpCurrent) * 0.003 => subAmpCurrent;
@@ -689,7 +780,7 @@ while(true) {
         // Pad: breathing amplitude + filter LFO
         padBreathPhase + 0.0008 => padBreathPhase;
         0.0012 => float padLfoRate;
-        if(arrangement[phraseBar] >= 3) padLfoRate * 1.4 => padLfoRate;
+        if(arrLvl >= 3) padLfoRate * 1.4 => padLfoRate;
         if(phraseBar % 4 == 2) padLfoRate * 1.2 => padLfoRate;
         if(phraseBar >= 12) padLfoRate * 0.8 => padLfoRate;
         padLfoPhase + padLfoRate => padLfoPhase;
@@ -703,11 +794,18 @@ while(true) {
         padFilt.freq() + ((padFiltTarget + padLfoMod) - padFilt.freq()) * 0.008 => padFilt.freq;
         if(padFiltTarget > 500.0) padFiltTarget * 0.99998 => padFiltTarget;
 
-        // Pad detune drift: very slow pitch wobble on b oscillators
-        0.0001 => float driftRate;
-        pad1b.freq() * (1.0 + 0.0002 * Math.sin(stepCount * driftRate * 1.1)) => pad1b.freq;
-        pad2b.freq() * (1.0 + 0.0002 * Math.sin(stepCount * driftRate * 0.9)) => pad2b.freq;
-        pad3b.freq() * (1.0 + 0.0002 * Math.sin(stepCount * driftRate * 1.3)) => pad3b.freq;
+        // Pad: voices glide (~1s) to the voice-led targets; detuned pairs with
+        // slow drift on the b side (computed from the base, never cumulative)
+        0.0 => float drift;
+        for(0 => int i; i < 3; i++) {
+            padF[i] + (padT[i] - padF[i]) * 0.08 => padF[i];
+            shimF[i] + (shimT[i] - shimF[i]) * 0.08 => shimF[i];
+        }
+        0.0015 * Math.sin(stepCount * 0.0011) => drift;
+        padF[0] * 0.997 => pad1a.freq; padF[0] * (1.003 + drift) => pad1b.freq;
+        padF[1] * 0.997 => pad2a.freq; padF[1] * (1.003 - drift) => pad2b.freq;
+        padF[2] * 0.998 => pad3a.freq; padF[2] * (1.002 + drift * 0.7) => pad3b.freq;
+        shimF[0] => shim1.freq; shimF[1] => shim2.freq; shimF[2] * 1.001 => shim3.freq;
 
         // Shimmer: very slow fade in/out
         shimAmpCurrent + (shimAmpTarget - shimAmpCurrent) * 0.003 => shimAmpCurrent;
@@ -715,19 +813,28 @@ while(true) {
         if(shimAmpTarget > 0.002) shimAmpTarget * 0.9999 => shimAmpTarget;
 
         // Strings: very slow attack and release — bowed, cinematic
-        strAmpCurrent + (strAmpTarget - strAmpCurrent) * 0.001 => strAmpCurrent;
+        strAmpCurrent + (strAmpTarget - strAmpCurrent) * 0.008 => strAmpCurrent;
         strAmpCurrent => strG.gain;
-        if(strAmpTarget > 0.002) strAmpTarget * 0.99992 => strAmpTarget;
+        if(strAmpTarget > 0.002) strAmpTarget * 0.9994 => strAmpTarget;
         strFilt.freq() + (strFiltTarget - strFilt.freq()) * 0.002 => strFilt.freq;
         if(strFiltTarget > 1200.0) strFiltTarget * 0.99998 => strFiltTarget;
         // Slow detune drift for living string feel
-        str1b.freq() * (1.0 + 0.0003 * Math.sin(stepCount * 0.00008)) => str1b.freq;
-        str2b.freq() * (1.0 + 0.0003 * Math.sin(stepCount * 0.00011)) => str2b.freq;
+        strF1 + (strT1 - strF1) * 0.06 => strF1;
+        strF2 + (strT2 - strF2) * 0.06 => strF2;
+        strF1 * 0.999 => str1a.freq; strF1 * (1.001 + 0.0008 * Math.sin(stepCount * 0.0013)) => str1b.freq;
+        strF2 * 0.998 => str2a.freq; strF2 * (1.002 - 0.0008 * Math.sin(stepCount * 0.0009)) => str2b.freq;
 
-        // Arp: quick attack, slow decay for pluck feel
-        arpAmpCurrent + (arpAmpTarget - arpAmpCurrent) * 0.02 => arpAmpCurrent;
+        // Melody: layer gate (fast in, slow out) + per-voice soft-attack bell envelopes
+        if(arpAmpTarget > arpAmpCurrent) arpAmpCurrent + (arpAmpTarget - arpAmpCurrent) * 0.05 => arpAmpCurrent;
+        else arpAmpCurrent + (arpAmpTarget - arpAmpCurrent) * 0.006 => arpAmpCurrent;
         arpAmpCurrent => arpG.gain;
-        if(arpAmpTarget > 0.002) arpAmpTarget * 0.994 => arpAmpTarget;
+        for(0 => int i; i < 2; i++) {
+            if(arpAtk[i]) {
+                arpEnv[i] + (arpPeak[i] - arpEnv[i]) * 0.35 => arpEnv[i];
+                if(arpEnv[i] >= arpPeak[i] * 0.95) 0 => arpAtk[i];
+            } else arpEnv[i] * 0.982 => arpEnv[i];
+            arpEnv[i] => arpEnvG[i].gain;
+        }
 
         // Texture breath
         texAmpCurrent + (texAmpTarget - texAmpCurrent) * 0.003 => texAmpCurrent;

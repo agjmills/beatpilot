@@ -52,8 +52,19 @@ me.dir() + "/../samples/goa/" => string smpDir;
 0 => int introLen;
 
 // ============ PHRASE / SONG STRUCTURE ============
-// Goa progressions stay in dark/eastern territory — minor i, II (phrygian), v, iv
-[[0, 1, 0, 4], [0, 4, 1, 0], [0, 3, 4, 1], [0, 1, 3, 0]] @=> int progs[][];
+// Goa progressions stay in dark/eastern territory. Degrees index the 7-note
+// mode below, and each scale gets its own set so every chord is a real major
+// or minor triad in that mode (no diminished/augmented accidents):
+//   phrygian: i bII bIII iv bVI bvii   phrygian dominant: I bII iv bvii
+//   harmonic minor: i iv V VI          aeolian: i bIII iv v bVI bVII
+[[[0, 1, 6, 1], [0, 5, 6, 1], [0, 3, 5, 1], [0, 2, 3, 1]],
+ [[0, 1, 0, 6], [0, 1, 6, 1], [0, 3, 6, 1], [0, 6, 3, 1]],
+ [[0, 5, 3, 4], [0, 4, 5, 4], [0, 3, 0, 4], [0, 5, 0, 4]],
+ [[0, 5, 6, 4], [0, 5, 2, 6], [0, 6, 5, 6], [0, 3, 5, 6]]] @=> int progsAll[][][];
+// Consonant chord degrees per scale — chord substitutions pick from these
+[[1, 2, 3, 5, 6], [1, 3, 6], [3, 4, 5], [2, 3, 4, 5, 6]] @=> int goodDeg[][];
+progsAll[0] @=> int progs[][];
+-99 => int REST; // rest marker in motif/bassLine (negative degrees are real notes)
 0 => int progIdx;
 0 => int chordIdx;
 0 => int chordRoot;
@@ -71,7 +82,7 @@ int arrangement[16];
 
 fun void generateMotif() {
     seed => int s;
-    for(0 => int i; i < PHRASE_LEN; i++) -1 => motif[i];
+    for(0 => int i; i < PHRASE_LEN; i++) REST => motif[i];
 
     // Goa cell: tight intervals, often climbing — eastern feel
     int cellDeg[3];
@@ -117,25 +128,31 @@ fun void generateMotif() {
     cellDeg[0] => motif[56];
     0 => motif[60];
 
-    // --- ROLLING ACID BASS LINE ---
-    // Goa bass = constant 16ths, nearly every step. The squelch IS the genre.
-    for(0 => int i; i < PHRASE_LEN; i++) -1 => bassLine[i];
-
-    // Every step gets a note in goa — rolling river of bass
-    // Most are root, with cell intervals as decoration
-    for(0 => int i; i < 64; i++) {
-        if(i % 4 == 0) 0 => bassLine[i];           // downbeat: root
-        else if(i % 8 == 6) cellDeg[1] => bassLine[i]; // syncopated cell tone
-        else if(i % 4 == 2) 0 => bassLine[i];       // off: root
-        else if((s + i) % 3 == 0) -1 => bassLine[i]; // occasional rest
-        else 0 => bassLine[i];                      // most: root
+    // --- ROLLING PSY BASS LINE ---
+    // The goa/psy roll: K-b-b-b. The kick owns every beat, the bass fills the
+    // three 16ths after it, so they never fight. Mostly root (the drive),
+    // with the cell's interval as the passing tone on the last 16th of beats
+    // 2 and 4, and an octave lift (degree 7) in the busier bars.
+    for(0 => int i; i < PHRASE_LEN; i++) {
+        if(i % 4 == 0) REST => bassLine[i];          // kick's slot
+        else if(i % 8 == 7) cellDeg[1] => bassLine[i]; // cell interval
+        else 0 => bassLine[i];
     }
-
-    // Bar 3: bass climbs with the lead — peak energy
-    cellDeg[1] => bassLine[34];
-    cellDeg[2] => bassLine[38];
-    2 => bassLine[42];
-    3 => bassLine[46];
+    // Bar 2: passing tone follows the lead's variation
+    for(16 => int i; i < 32; i++) {
+        if(i % 8 == 7) {
+            if(varType == 0) cellDeg[1] + 2 => bassLine[i];
+            else if(varType == 1) cellDeg[2] => bassLine[i];
+            else cellDeg[1] - 1 => bassLine[i];
+        }
+    }
+    // Bar 3: busier — the whole cell walks through the roll, octave lifts
+    for(32 => int i; i < 48; i++) {
+        if(i % 4 == 3) cellDeg[((i - 32) / 4) % 3] => bassLine[i];
+        else if(i % 8 == 2) 7 => bassLine[i];
+    }
+    // Bar 4: just roots, resolving
+    for(48 => int i; i < 64; i++) if(i % 4 != 0) 0 => bassLine[i];
 
     // --- ARRANGEMENT ---
     s % 3 => int arrType;
@@ -209,7 +226,7 @@ SndBuf voice5 => voiceG;
 SndBuf voice6 => voiceG;
 SndBuf voice7 => voiceG;
 SndBuf voice8 => voiceG;
-0.7 => voiceG.gain;
+0.45 => voiceG.gain; // sits under the mix; the delays carry the echo
 SndBuf @ voices[8];
 voice1 @=> voices[0]; voice2 @=> voices[1]; voice3 @=> voices[2]; voice4 @=> voices[3];
 voice5 @=> voices[4]; voice6 @=> voices[5]; voice7 @=> voices[6]; voice8 @=> voices[7];
@@ -227,17 +244,26 @@ for(0 => int vi; vi < 8; vi++) {
 }
 if(voiceCount > 0) <<< "Beatpilot [goa]: ", voiceCount, " voice samples loaded" >>>;
 
-// ============ SCALES (eastern/exotic 5-note pools) ============
-// 0: phrygian pentatonic (root, b2, b3, 5, b7) — dark eastern
-// 1: hijaz pentatonic (root, b2, M3, 5, b6) — exotic, augmented 2nd
-// 2: harmonic minor pentatonic (root, b3, 5, b6, M7) — cinematic
-// 3: phrygian dominant pentatonic (root, b2, M3, 5, b7) — flamenco/goa staple
-[[0,1,3,7,10], [0,1,4,7,8], [0,3,7,8,11], [0,1,4,7,10]] @=> int scales[][];
+// ============ SCALES (full 7-note eastern/dark modes) ============
+// Full modes so stacked thirds are real triads and the lead can run the
+// eastern lines goa is built on (pentatonic subsets made b2-tritone "chords").
+// 0: phrygian — dark eastern       1: phrygian dominant (hijaz) — goa staple
+// 2: harmonic minor — cinematic    3: aeolian — darker, open
+[[0,1,3,5,7,8,10], [0,1,4,5,7,8,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int scales[][];
 
 fun int note(int degree, int octave) {
     scales[scaleType] @=> int scl[];
-    if(degree < 0) return 0;
-    return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
+    scl.cap() => int n;
+    degree => int d; octave => int o;
+    while(d < 0) { d + n => d; o - 1 => o; } // negative degrees go below the root
+    return key + o * 12 + scl[d % n] + (d / n) * 12;
+}
+
+// Transpose by chord root toward the nearest direction (voice-leading):
+// degrees 4-6 go down instead of up, keeping lead and pad in one register.
+fun int chordOffset() {
+    if(chordRoot >= 4) return chordRoot - 7;
+    return chordRoot;
 }
 
 // ============ KICK (deep, punchy 4/4) ============
@@ -257,7 +283,7 @@ kickClickEnv.set(0.2::ms, 8::ms, 0.0, 3::ms);
  [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],
  [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0]] @=> int kPat[][];
 
-[1.0, 0.3, 0.6, 0.3, 0.95, 0.3, 0.6, 0.4, 0.95, 0.3, 0.6, 0.3, 0.9, 0.35, 0.6, 0.5] @=> float hatVel[];
+[1.0, 0.3, 0.9, 0.35, 0.95, 0.3, 0.85, 0.4, 0.95, 0.3, 0.9, 0.35, 0.9, 0.35, 0.85, 0.5] @=> float hatVel[];
 [1.0, 0.0, 0.0, 0.0, 0.95, 0.0, 0.0, 0.0, 0.95, 0.0, 0.0, 0.0, 0.9, 0.0, 0.0, 0.0] @=> float kickVel[];
 
 // ============ CLOSED HAT ============
@@ -266,11 +292,11 @@ Noise chN => HPF chHP => ADSR chEnv => Gain chG => master;
 chEnv.set(0.3::ms, 18::ms, 0.0, 5::ms);
 0.06 => chG.gain;
 
-// Closed hats fill in 16ths at higher energy
+// Closed hats: off-beat at energy 1, 16th ghosts around the open hat above
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
- [0,1,1,0,0,1,1,0,0,1,1,0,0,1,1,0],
- [1,1,1,0,1,1,1,0,1,1,1,0,1,1,1,0]] @=> int chPat[][];
+ [0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1],
+ [1,1,0,1,1,1,0,1,1,1,0,1,1,1,0,1]] @=> int chPat[][];
 
 // ============ OPEN HAT (classic trance off-beats) ============
 Noise ohN => BPF ohBP => ADSR ohEnv => Gain ohG => master;
@@ -278,11 +304,11 @@ Noise ohN => BPF ohBP => ADSR ohEnv => Gain ohG => master;
 ohEnv.set(1::ms, 180::ms, 0.04, 120::ms);
 0.06 => ohG.gain;
 
-// Open hat on every off-beat (steps 4, 12) at energy 2+ — the trance pulse
+// Open hat on every off-beat (the "and": steps 2, 6, 10, 14) at energy 2+ — the trance pulse
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],
- [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0]] @=> int ohPat[][];
+ [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
+ [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]] @=> int ohPat[][];
 
 // ============ ACID BASS (the goa squelch) ============
 // Saw + sub-sine through resonant LPF with per-note envelope
@@ -302,8 +328,8 @@ SinOsc bassSub => Gain bassSubG => master;  // sub layer
 // FM synth: carrier + modulator with high mod depth = trance lead
 SinOsc ldMod => SinOsc ldOsc => LPF ldF => Gain ldDry => master;
 SinOsc ldOsc2 => ldF;  // detuned partner for width
-3 => ldOsc.sync;   // FM mode
-0.0 => ldOsc.gain; 0.0 => ldOsc2.gain;
+2 => ldOsc.sync;   // FM mode (2 = FM; 3 is not a valid mode)
+0.7 => ldOsc.gain; 0.3 => ldOsc2.gain;
 3000.0 => ldF.freq; 1.2 => ldF.Q;
 0.0 => ldDry.gain;
 3000.0 => float ldFiltTarget;
@@ -336,7 +362,10 @@ voiceG => ldDly2;
 TriOsc padOsc1 => LPF padF => Gain padG => master;
 SinOsc padOsc2 => padF;
 TriOsc padOsc3 => padF;
-0.22 => padOsc1.gain; 0.28 => padOsc2.gain; 0.18 => padOsc3.gain;
+TriOsc padOsc4 => padF;  // detuned partner of the root, slowly drifting
+0.22 => padOsc1.gain; 0.28 => padOsc2.gain; 0.18 => padOsc3.gain; 0.16 => padOsc4.gain;
+0.0 => float padRootFreq;
+0.0 => float padDriftPhase;
 500.0 => padF.freq; 1.6 => padF.Q;
 0.0 => padG.gain;
 0.0 => float padGainTarget;
@@ -364,6 +393,27 @@ SinOsc impactOsc => Gain impactG => master;
 0.0 => impactOsc.gain;
 0.0 => impactG.gain;
 
+// ============ REVERB (4-tap, prime-ratio, cross-fed, LP darkened) ============
+// Space for pad, lead, clap, open hat and voice. Kick and bass stay dry and tight.
+Gain revSend => Gain revIn => blackhole; // send level is separate from the loop
+0.25 => revSend.gain;
+LPF revLP; Gain revFb; Gain revOut => master;
+2600.0 => revLP.freq;
+0.42 => float revFbBase; 0.55 => float revOutBase;
+revFbBase / 2.5 => revFb.gain; // 4 taps summed: DC loop gain 4*0.17 = 0.67 (<1, stable)
+revOutBase => revOut.gain;
+Delay rvTap[4];
+[47.0, 67.0, 89.0, 113.0] @=> float rvMs[];
+for(0 => int i; i < 4; i++) {
+    revIn => rvTap[i] => revLP;
+    rvTap[i] => revOut;
+    200::ms => rvTap[i].max;
+    rvMs[i]::ms => rvTap[i].delay;
+}
+revLP => revFb => revIn;
+padG => revSend; ldDry => revSend; ldDlyF => revSend; ldDlyF2 => revSend;
+clpG => revSend; ohG => revSend; voiceG => revSend;
+
 // ============ STATE FILE READER ============
 fun void readState() {
     FileIO f;
@@ -384,6 +434,7 @@ fun void readState() {
             Math.srandom(newSeed * 7919 + newKey * 31 + newScale + 1);
         newKey % 12 => key;
         newScale % 4 => scaleType;
+        progsAll[scaleType] @=> progs;
         newSeed % 256 => seed;
         newSeed % 2 => variant;
         seed % progs.cap() => progIdx;
@@ -522,16 +573,21 @@ while(true) {
             0 => phraseBar;
             phraseRepeat + 1 => phraseRepeat;
             for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
-            // Goa chord sub: shift up 1 degree (semitone in phrygian = chromatic tension)
+            // Goa chord sub: swap one non-tonic chord for another real triad of the
+            // mode (e.g. bII -> bvii in phrygian) — a surprise that stays in key
             if(phraseRepeat % 3 == 2 && energy >= 2) {
-                (seed * 13 + phraseRepeat) % 4 => int subIdx;
-                (progs[progIdx][subIdx] + 1) % 5 => chordSub[subIdx];
+                1 + (seed * 13 + phraseRepeat) % 3 => int subIdx;
+                goodDeg[scaleType] @=> int gd[];
+                gd[(seed + phraseRepeat) % gd.cap()] => int sd;
+                if(sd == progs[progIdx][subIdx]) gd[(seed + phraseRepeat + 1) % gd.cap()] => sd;
+                sd => chordSub[subIdx];
             }
             // NEW PHASE: every 4 phrase repeats, shift to a new section
             if(phraseRepeat % 4 == 0 && phraseRepeat > 0 && energy >= 1 && transition == 0) {
                 (seed + phraseRepeat * 7 + 31) % 256 => seed;
                 seed % progs.cap() => progIdx;
                 seed % scales.cap() => scaleType;
+                progsAll[scaleType] @=> progs;
                 progs[progIdx][0] => chordRoot;
                 generateMotif();
                 4 => transition;
@@ -544,7 +600,7 @@ while(true) {
                     if(vIdx == voiceLastIdx && voiceCount > 1) (vIdx + 1) % voiceCount => vIdx;
                     vIdx => voiceLastIdx;
                     0 => voices[vIdx].pos;
-                    8 => voiceCooldown;
+                    32 => voiceCooldown;
                 }
             }
         }
@@ -583,7 +639,7 @@ while(true) {
                 if(vIdx == voiceLastIdx && voiceCount > 1) (vIdx + 1) % voiceCount => vIdx;
                 vIdx => voiceLastIdx;
                 0 => voices[vIdx].pos;
-                10 => voiceCooldown;
+                40 => voiceCooldown; // a vocal every few minutes, not every phrase
             }
         }
 
@@ -621,8 +677,10 @@ while(true) {
                 if(fxType == 1) {
                     20.0 + p * p * 2500.0 => fxHPF.freq;
                 } else if(fxType == 2) {
-                    1.6 + p * 7.0 => padF.Q;
-                    padFiltTarget + p * 1000.0 => padF.freq;
+                    // Reverb wash: everything gets spacious, pad resonance rises
+                    (revFbBase + p * 0.15) / 2.5 => revFb.gain; // peak DC loop gain 0.91
+                    revOutBase + p * 0.6 => revOut.gain;
+                    1.6 + p * 3.0 => padF.Q;
                 } else if(fxType == 3) {
                     0.55 + p * 0.35 => ldDlyFb.gain;
                     0.10 + p * 0.06 => ldDly1.gain;
@@ -631,6 +689,8 @@ while(true) {
         }
         if(fxType == 0 && !introActive) {
             if(padF.Q() > 1.7) padF.Q() * 0.92 + 1.6 * 0.08 => padF.Q;
+            revFb.gain() * 0.95 + (revFbBase / 2.5) * 0.05 => revFb.gain;
+            revOut.gain() * 0.95 + revOutBase * 0.05 => revOut.gain;
             if(ldDlyFb.gain() > 0.56) ldDlyFb.gain() * 0.95 + 0.55 * 0.05 => ldDlyFb.gain;
             if(ldDly1.gain() > 0.105) ldDly1.gain() * 0.93 + 0.10 * 0.07 => ldDly1.gain;
         }
@@ -680,6 +740,7 @@ while(true) {
         kVel * 0.3 => kickClick.gain;
         if(useSamples) { kickOsc.gain() * 0.3 => kickOsc.gain; kickClick.gain() * 0.3 => kickClick.gain; }
         kickClickEnv.keyOn();
+        bassEnv * 0.15 => bassEnv; // sidechain: the kick owns the low end
     }
 
     // ---- HATS ----
@@ -711,6 +772,7 @@ while(true) {
     // ---- CLAP ----
     if(clpPat[energy][s]) {
         if(useSamples) { 0 => smpClap.pos; 0.18 => smpClapG.gain; }
+        0.28 => clpG.gain;
         clpEnv.keyOn();
     }
 
@@ -758,40 +820,46 @@ while(true) {
     // ---- ACID BASS (rolling 16ths with per-note envelope = squelch) ----
     if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
         bassLine[phraseStep % PHRASE_LEN] => int bDeg;
-        if(bDeg >= 0) {
-            (bDeg + chordRoot) % 5 => bDeg;
-            if(bDeg < 0) bDeg + 5 => bDeg;
-            // Goa bass octave: 2 normally, 3 on accents
-            2 => int bassOct;
-            if(phraseStep % 8 == 6) 3 => bassOct;
-            note(bDeg, bassOct) => int bassMidi;
+        if(bDeg != REST) {
+            // Chord root folded into the psy-bass register (MIDI 31-45, G1-A2)
+            note(chordRoot, 3) => int rootMidi;
+            while(rootMidi > 45) rootMidi - 12 => rootMidi;
+            while(rootMidi < 31) rootMidi + 12 => rootMidi;
+            rootMidi + note(chordRoot + bDeg, 3) - note(chordRoot, 3) => int bassMidi;
             Std.mtof(bassMidi) => float bf;
             bf => bassOsc1.freq;
             bf * 1.003 => bassOsc2.freq;  // detune for thickness
-            Std.mtof(bassMidi - 12) => bassSub.freq;
+            bassMidi => int subMidi;
+            while(subMidi > 43) subMidi - 12 => subMidi;
+            Std.mtof(subMidi) => bassSub.freq;
             // Trigger envelope: amplitude pluck + filter sweep
             1.0 => bassEnv;
-            // Filter env target: opens up on accents, climbs in bar 3
+            if(phraseStep % 4 == 1) 0.8 => bassEnv; // first 16th after the kick, softer
+            // Acid "knob": a slow 32-bar sweep a producer would ride by hand
+            0.6 + 0.4 * Math.sin(stepCount * 2.0 * Math.PI / 512.0) => float acid;
+            if(energy >= 3) acid * 1.2 => acid;
             if(phraseStep >= 32 && phraseStep < 48) {
-                2500.0 + Math.random2f(0.0, 1500.0) => bassFiltEnv;
-            } else if(phraseStep % 4 == 0) {
-                1800.0 => bassFiltEnv;
+                (1800.0 + Math.random2f(0.0, 1200.0)) * acid => bassFiltEnv;
+            } else if(phraseStep % 4 == 3) {
+                1500.0 * acid => bassFiltEnv;
             } else {
-                900.0 + Math.random2f(0.0, 600.0) => bassFiltEnv;
+                (700.0 + Math.random2f(0.0, 500.0)) * acid => bassFiltEnv;
             }
         }
     }
 
     // ---- PAD ----
     if(transition != 4 && s == 0 && arrLevel >= 2) {
-        chordRoot => int pRoot;
-        chordRoot + 2 => int pDeg2;
-        chordRoot + 4 => int pDeg3;
+        // Stacked thirds in the 7-note mode = a real triad; voice-led root offset
+        chordOffset() => int pRoot;
+        pRoot + 2 => int pDeg2;
+        pRoot + 4 => int pDeg3;
         Std.mtof(note(pRoot, 4)) => padOsc1.freq;
         Std.mtof(note(pDeg2, 4)) => padOsc2.freq;
         Std.mtof(note(pDeg3, 4)) => padOsc3.freq;
         padOsc1.freq() * 0.998 => padOsc1.freq;
         padOsc3.freq() * 1.002 => padOsc3.freq;
+        Std.mtof(note(pRoot, 4)) * 1.0025 => padRootFreq;
         phraseBar % 4 => int barInChord;
         if(barInChord < 2) 0.04 => padGainTarget;
         else if(barInChord == 2) 0.08 => padGainTarget;
@@ -806,13 +874,23 @@ while(true) {
     if(transition != 4 && motifGenerated && arrLevel >= 3) {
         motif[phraseStep % PHRASE_LEN] => int deg;
         phraseBar / 4 => int motifRep;
-        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => deg;
-        if(motifRep == 3 && deg >= 0 && phraseStep % 8 == 6) deg + 1 => deg;
-        if(deg >= 0) {
-            (deg + chordRoot) % 5 => deg;
-            if(deg < 0) deg + 5 => deg;
+        // Variation changes on every pass of the 16-bar phrase too, so the line
+        // develops over minutes instead of repeating identically
+        if(motifRep == 1 && (seed + phraseStep + phraseRepeat * 3) % 5 == 0) REST => deg;
+        if(motifRep == 3 && deg != REST && phraseStep % 8 == (2 + 4 * (phraseRepeat % 2))) deg - 1 => deg;
+        if(deg != REST) {
+            // On the beat, land on a chord tone (root/3rd/5th of the current
+            // chord); passing tones live on the 16ths in between
+            if(phraseStep % 4 == 0) {
+                ((deg % 7) + 7) % 7 => int rel;
+                if(rel == 1 || rel == 3 || rel == 5) deg - 1 => deg;
+                else if(rel == 6) deg + 1 => deg;
+            }
+            // No modulo fold: keep the contour, transpose toward the nearest root
+            deg + chordOffset() => deg;
             5 => int ldOct;
-            if(motifRep == 2 && phraseStep >= 32) 6 => ldOct;
+            if(key >= 6) 4 => ldOct; // keep high keys out of the shrill zone
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48 && phraseRepeat % 2 == 0) ldOct + 1 => ldOct;
             note(deg, ldOct) => int ldMidi;
             Std.mtof(ldMidi) => float lf;
             lf => ldOsc.freq;
@@ -836,7 +914,7 @@ while(true) {
             } else {
                 1500.0 + Math.random2f(0.0, 800.0) => ldFiltTarget;
             }
-            ldVel => ldAmpTarget;
+            ldVel * 1.6 => ldAmpTarget; // lead sits ~4dB higher: it carries the track
         }
     } else if(arrLevel < 3) {
         0.0 => ldAmpTarget;
@@ -860,7 +938,7 @@ while(true) {
         if(kickOsc.gain() > 0.005) {
             40.0 + 90.0 * Math.exp(-kickPh * 8.0) => kickOsc.freq;
             kickOsc.freq() * 4.0 => kickLPF.freq;
-            kickOsc.gain() * 0.95 => kickOsc.gain;
+            kickOsc.gain() * 0.91 => kickOsc.gain; // ~250ms tail, out of the bass's way
             kickPh + 0.08 => kickPh;
         } else {
             0.0 => kickOsc.gain;
@@ -880,9 +958,9 @@ while(true) {
 
         // ACID BASS envelope decay (the squelch)
         // Amp: pluck and decay
-        bassEnv * 0.92 => bassEnv;
+        bassEnv * 0.86 => bassEnv; // short notes: each 16th articulates
         bassEnv * 0.18 => bassG.gain;
-        bassEnv * 0.10 => bassSub.gain;
+        bassEnv * 0.22 => bassSub.gain;
         // Filter: pluck and decay toward a low resting value
         bassFiltEnv * 0.93 + 600.0 * 0.07 => bassFiltEnv;
         bassF.freq() + (bassFiltEnv - bassF.freq()) * 0.20 => bassF.freq;
@@ -895,9 +973,9 @@ while(true) {
         if(ldFiltTarget > 1500.0) ldFiltTarget * 0.999 => ldFiltTarget;
 
         // Lead amplitude env
-        ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.05 => ldAmpCurrent;
+        ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.35 => ldAmpCurrent; // ~60ms attack
         ldAmpCurrent => ldDry.gain;
-        if(ldAmpTarget > 0.01) ldAmpTarget * 0.985 => ldAmpTarget;
+        if(ldAmpTarget > 0.005) ldAmpTarget * 0.96 => ldAmpTarget;
 
         // FM mod depth smooth + apply
         ldModDepth + (ldModDepthTarget - ldModDepth) * 0.05 => ldModDepth;
@@ -914,6 +992,8 @@ while(true) {
         padF.freq() + ((padFiltTarget + padLfoMod) - padF.freq()) * 0.015 => padF.freq;
         if(padFiltTarget > 400.0) padFiltTarget * 0.9997 => padFiltTarget;
         padG.gain() + (padGainTarget - padG.gain()) * 0.01 => padG.gain;
+        padDriftPhase + 0.0001 => padDriftPhase;
+        padRootFreq * (1.0 + Math.sin(padDriftPhase) * 0.002) => padOsc4.freq;
         if(transition == 4) 0.0 => padGainTarget;
 
         // FX HPF release

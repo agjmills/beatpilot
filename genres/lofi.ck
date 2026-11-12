@@ -26,6 +26,7 @@ me.dir() + "/../samples/lofi/" => string smpDir;
 (60.0 / BPM / 4.0)::second => dur stepDur;
 4 => int SUBSTEPS;
 0.63 => float swingAmt; // heavy swing — lofi lives on shuffle
+22::ms => dur snareLag;  // backbeat sits lazily behind the grid
 
 // ============ STATE ============
 0 => int energy;
@@ -52,141 +53,230 @@ me.dir() + "/../samples/lofi/" => string smpDir;
 0 => int introBar;
 0 => int introLen;
 
+// ============ SCALES (7-note modes, so stacked thirds give real chords) ============
+// major, dorian, natural minor, lydian
+[[0,2,4,5,7,9,11], [0,2,3,5,7,9,10], [0,2,3,5,7,8,10], [0,2,4,6,7,9,11]] @=> int scales[][];
+
 // ============ PHRASE / CHORD PROGRESSION ============
-// Jazzy progressions: ii-V-I-vi, I-vi-ii-V, etc.
-[[0, 2, 4, 3], [0, 4, 1, 3], [2, 4, 0, 3], [0, 3, 2, 4], [0, 1, 3, 4]] @=> int progs[][];
+// Scale-degree roots; each becomes a 7th/9th chord in the current mode.
+[[1, 4, 0, 5],   // ii-V-I-vi
+ [0, 5, 1, 4],   // I-vi-ii-V turnaround
+ [3, 2, 1, 0],   // IV-iii-ii-I descending
+ [5, 3, 0, 4],   // vi-IV-I-V (darker)
+ [3, 4, 2, 5],   // IV-V-iii-vi "royal road"
+ [0, 3, 2, 5]] @=> int progs[][]; // I-IV-iii-vi
 0 => int progIdx;
 0 => int chordIdx;
 0 => int chordRoot;
 0 => int phraseBar;
 0 => int phraseRepeat;  // how many times the 16-bar phrase has cycled
 int chordSub[4];        // chord substitution slots (-1 = no sub)
+int chordPc[4];         // pitch classes of root, 3rd, 5th, 7th of the current chord
+int voicing[4];         // keys voicing currently sounding (MIDI)
+int nextVoicing[4];
+0 => int pushed;        // keys anticipated this bar's chord at the end of the last bar
+-1 => int keysChord;    // chord root the keys voicing was built for
+60 => int leadAnchor;   // MIDI of the chord root in the lead register (voice-led)
 
 // ============ LEAD MOTIF (4-bar phrase — sparse, melodic) ============
+-99 => int REST;
 64 => int PHRASE_LEN;
-int motif[64];          // lead: scale degrees per step (-1 = rest)
-int bassLine[64];       // bass: scale degrees per step (-1 = rest)
+int motif[64];          // lead: degrees relative to the chord root (REST = rest)
+int bassLine[64];       // bass: degrees relative to the chord root (REST = rest)
 0 => int motifGenerated;
 0 => int phraseStep;    // current position in the 64-step phrase (shared by bass + lead)
+0 => int compType;      // keys comping rhythm
+0 => int arrType;
 
 // Arrangement mask: which bars (0-15) have which layers active
-// 0=nothing, 1=bass only, 2=bass+keys, 3=bass+keys+lead
+// 0=nothing, 1=bass + sparse keys, 2=bass + comping keys, 3=+ lead
 int arrangement[16];
 
-fun void generateMotif() {
-    seed => int s;
-    for(0 => int i; i < PHRASE_LEN; i++) -1 => motif[i];
+fun int note(int degree, int octave) {
+    scales[scaleType] @=> int scl[];
+    scl.cap() => int n;
+    degree => int d;
+    octave => int o;
+    while(d < 0) { d + n => d; o - 1 => o; }
+    return key + o * 12 + scl[d % n] + (d / n) * 12;
+}
 
-    // --- CELL-BASED COMPOSITION ---
-    // Generate a short 2-3 note cell, then repeat/transpose/vary it.
-    // Repetition = composed. Random = cat on keyboard.
+fun int pcOf(int m) { return ((m % 12) + 12) % 12; }
 
-    // Cell: defined as intervals from a starting degree + rhythm
-    // e.g., [0, +2, -1] starting on degree 0 = play 0, 2, 1
-    int cellDeg[3];    // scale degrees in the cell
-    int cellPos[3];    // step positions within a half-bar (0-7)
+// Degree whose triad would be diminished gets swapped for a neighbour chord
+// (except natural minor, where ii-half-diminished is the classic jazz ii).
+fun int fixRoot(int r) {
+    ((r % 7) + 7) % 7 => r;
+    if(note(r + 4, 0) - note(r, 0) == 6 && scaleType != 2) (r + 5) % 7 => r;
+    return r;
+}
 
-    // Seed determines the cell shape
-    0 => cellDeg[0];                           // always start on a chord tone
-    [1, 2, -1, 2, 1, -2] @=> int leaps[];
-    leaps[s % leaps.cap()] => int leap1;
-    leap1 => cellDeg[1];                       // first interval
-    // Third note: approach back toward start or continue
-    [-1, 0, 1, -1, 0] @=> int resolves[];
-    cellDeg[1] + resolves[(s / 2) % resolves.cap()] => cellDeg[2];
+fun int chordAt(int bar) {
+    bar / 4 => int ci;
+    if(ci > 3) 3 => ci;
+    if(ci < 0) 0 => ci;
+    progs[progIdx][ci] => int r;
+    if(chordSub[ci] >= 0) chordSub[ci] => r;
+    return fixRoot(r);
+}
 
-    // Cell rhythm: where the 3 notes sit within an 8-step group
-    [[0, 4, 6], [0, 2, 6], [0, 4, 8], [2, 4, 6], [0, 6, 8]] @=> int cellRhythms[][];
-    cellRhythms[(s / 3) % cellRhythms.cap()] @=> int cR[];
-    cR[0] => cellPos[0]; cR[1] => cellPos[1]; cR[2] => cellPos[2];
+fun void setChordPcs(int root) {
+    pcOf(note(root, 0)) => chordPc[0];
+    pcOf(note(root + 2, 0)) => chordPc[1];
+    pcOf(note(root + 4, 0)) => chordPc[2];
+    pcOf(note(root + 6, 0)) => chordPc[3];
+}
 
-    // Variation type for bar 2: seed picks
-    s % 3 => int varType; // 0=transpose up, 1=invert, 2=retrograde
-
-    // --- Bar 1 (steps 0-15): play the cell, then silence ---
-    for(0 => int i; i < 3; i++) {
-        cellDeg[i] => motif[cellPos[i]];
-    }
-
-    // --- Bar 2 (steps 16-31): cell VARIED ---
-    if(varType == 0) {
-        // Transpose: same shape, up a 3rd (2 degrees)
-        for(0 => int i; i < 3; i++) {
-            cellDeg[i] + 2 => motif[16 + cellPos[i]];
+// Rootless voicing (3rd, 5th, 7th, 9th — the bass has the root), choosing the
+// inversion that moves the fewest semitones from the previous chord.
+fun void buildVoicing(int root, int prev[], int out[]) {
+    int pc[4];
+    pcOf(note(root + 2, 0)) => pc[0];
+    pcOf(note(root + 4, 0)) => pc[1];
+    pcOf(note(root + 6, 0)) => pc[2];
+    pcOf(note(root + 8, 0)) => pc[3];
+    pcOf(note(root, 0)) => int rp;
+    if(pcOf(pc[3] - rp) == 1) rp => pc[3]; // b9 would grind: double the root instead
+    999999 => int best;
+    int cand[4];
+    for(0 => int r; r < 4; r++) {
+        for(0 => int lo; lo < 2; lo++) {
+            // lowest note in E3..D#4 (lo=0) or one octave lower window start
+            52 + lo * 6 => int floorM;
+            floorM + pcOf(pc[r] - floorM) => cand[0];
+            for(1 => int i; i < 4; i++) {
+                pc[(r + i) % 4] => int p;
+                cand[i - 1] + 1 + pcOf(p - (cand[i - 1] + 1)) => cand[i];
+            }
+            if(cand[3] > 77) continue;
+            0 => int cost;
+            if(prev[0] > 0) {
+                for(0 => int i; i < 4; i++) Std.abs(cand[i] - prev[i]) +=> cost;
+            } else {
+                Std.abs(cand[0] + cand[3] - 124) => cost;
+            }
+            // close semitone rubs between neighbouring voices sound muddy on Rhodes
+            for(1 => int i; i < 4; i++) if(cand[i] - cand[i - 1] == 1) 8 +=> cost;
+            if(cost < best) {
+                cost => best;
+                for(0 => int i; i < 4; i++) cand[i] => out[i];
+            }
         }
-    } else if(varType == 1) {
-        // Invert: flip intervals (what went up goes down)
-        cellDeg[0] => motif[16 + cellPos[0]];
-        cellDeg[0] - leap1 => motif[16 + cellPos[1]];
-        cellDeg[0] - leap1 - resolves[(s / 2) % resolves.cap()] => motif[16 + cellPos[2]];
-    } else {
-        // Retrograde: play cell backwards
-        for(0 => int i; i < 3; i++) {
-            cellDeg[2 - i] + 1 => motif[16 + cellPos[i]];
-        }
     }
+}
 
-    // --- Bar 3 (steps 32-47): cell TWICE (compressed), reaching higher ---
-    // First half: cell transposed up
-    for(0 => int i; i < 3; i++) {
-        cellDeg[i] + 3 => motif[32 + cellPos[i]];
+fun int isChordTone(int m) {
+    for(0 => int i; i < 4; i++) if(pcOf(m) == chordPc[i]) return 1;
+    return 0;
+}
+
+// Notes a semitone above a chord tone (the 11th over a major chord, b9s, b6
+// over minor) are resolved down onto that chord tone.
+fun int fixAvoid(int m) {
+    if(isChordTone(m)) return m;
+    for(0 => int i; i < 4; i++) {
+        if(pcOf(m - chordPc[i]) == 1) return m - 1;
     }
-    // Second half: cell original, shifted later in bar
-    // Use approach note before the first cell note
-    cellDeg[0] - 1 => motif[32 + 8]; // approach note from below
-    for(0 => int i; i < 2; i++) {
-        cellDeg[i] => motif[32 + 10 + i * 2];
-    }
+    return m;
+}
 
-    // --- Bar 4 (steps 48-63): half cell + resolve to root ---
-    // Just the first interval of the cell, then land on root
-    cellDeg[0] + 1 => motif[48];     // pickup
-    cellDeg[1] => motif[52];          // first leap
-    0 => motif[60];                   // resolve to root — always
 
-    // --- BASS LINE: derived from the same cell ---
-    // Lofi bass is warm and simple — even sparser than techno.
-    // Root on strong beats, cell's first interval as passing tone.
-    for(0 => int i; i < PHRASE_LEN; i++) -1 => bassLine[i];
+// On the beat the melody lands on a chord tone (or the 9th, a lofi colour)
+fun int snapStrong(int m) {
+    if(isChordTone(m) || pcOf(m - chordPc[0]) == 2) return m;
+    if(isChordTone(m - 1)) return m - 1;
+    if(isChordTone(m + 1)) return m + 1;
+    if(isChordTone(m - 2)) return m - 2;
+    return m + 2;
+}
 
-    // Bar 1: root + one passing tone (gentle, establishing)
-    0 => bassLine[0];
-    cellDeg[1] => bassLine[8];
-
-    // Bar 2: transposed matching cell variation
-    if(varType == 0) {
-        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[24];
-    } else if(varType == 1) {
-        0 => bassLine[16]; 0 - leap1 => bassLine[24];
-    } else {
-        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[24];
-    }
-
-    // Bar 3: slightly busier — root, passing tone, another root
-    0 => bassLine[32]; cellDeg[1] => bassLine[36];
-    0 => bassLine[40]; cellDeg[2] => bassLine[44];
-
-    // Bar 4: just roots — resolving, minimal
-    0 => bassLine[48];
-    0 => bassLine[56];
-
-    // --- ARRANGEMENT: which bars have which layers ---
-    // 16-bar phrase with structure — lofi breathes, layers come and go
-    // 0=nothing, 1=bass only, 2=bass+keys, 3=bass+keys+lead
-    s % 3 => int arrType;
-    if(arrType == 0) {
-        // Build: bass -> +keys -> +lead -> strip back
-        [1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,1,1] @=> int arrA[];
+fun void setArrangement(int t) {
+    if(t == 0) {
+        // Build: sparse -> +comping keys -> +lead -> strip back
+        [1,1,2,2, 2,2,3,3, 3,3,3,3, 2,2,1,1] @=> int arrA[];
         for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
-    } else if(arrType == 1) {
-        // Call-response: lead bars alternate with bass-only
-        [1,1,3,3, 1,1,3,3, 2,2,3,3, 3,3,2,1] @=> int arrB[];
+    } else if(t == 1) {
+        // Call-response: lead bars alternate with keys + bass
+        [2,2,3,3, 2,2,3,3, 2,2,3,3, 3,3,2,1] @=> int arrB[];
         for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
     } else {
         // Full then strip: everything then breakdown
         [2,2,3,3, 3,3,3,3, 2,2,2,2, 1,1,2,2] @=> int arrC[];
         for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
     }
+}
+
+fun void generateMotif() {
+    seed => int s;
+    for(0 => int i; i < PHRASE_LEN; i++) { REST => motif[i]; REST => bassLine[i]; }
+
+    // --- CELL-BASED COMPOSITION ---
+    // A short 3-note cell, then repeated/transposed/varied. Degrees are relative
+    // to the chord root, so the phrase moves with the harmony.
+    int cellDeg[3];
+    int cellPos[3];
+
+    [0, 2, 4, 2, 0] @=> int starts[];         // start on root, 3rd or 5th
+    starts[(s / 7) % starts.cap()] => cellDeg[0];
+    [1, 2, -1, 2, 1, -2] @=> int leaps[];
+    leaps[s % leaps.cap()] => int leap1;
+    cellDeg[0] + leap1 => cellDeg[1];
+    [-1, 0, 1, -1, 0] @=> int resolves[];
+    resolves[(s / 2) % resolves.cap()] => int res;
+    cellDeg[1] + res => cellDeg[2];
+
+    // Cell rhythm: wide and lazy (odd steps land on the swung 16th)
+    [[0, 4, 6], [0, 3, 6], [0, 4, 8], [2, 4, 7], [0, 6, 8]] @=> int cellRhythms[][];
+    cellRhythms[(s / 3) % cellRhythms.cap()] @=> int cR[];
+    cR[0] => cellPos[0]; cR[1] => cellPos[1]; cR[2] => cellPos[2];
+
+    s % 3 => int varType; // 0=transpose up, 1=invert, 2=retrograde
+
+    // --- Bar 1: the cell ---
+    for(0 => int i; i < 3; i++) cellDeg[i] => motif[cellPos[i]];
+
+    // --- Bar 2: the cell varied ---
+    if(varType == 0) {
+        for(0 => int i; i < 3; i++) cellDeg[i] + 2 => motif[16 + cellPos[i]];
+    } else if(varType == 1) {
+        cellDeg[0] => motif[16 + cellPos[0]];
+        cellDeg[0] - leap1 => motif[16 + cellPos[1]];
+        cellDeg[0] - leap1 - res => motif[16 + cellPos[2]];
+    } else {
+        for(0 => int i; i < 3; i++) cellDeg[2 - i] + 1 => motif[16 + cellPos[i]];
+    }
+
+    // --- Bar 3: the cell twice, first higher, then original with approach ---
+    for(0 => int i; i < 3; i++) {
+        cellPos[i] => int p;
+        if(p > 7) 7 => p;
+        cellDeg[i] + 2 => motif[32 + p];
+    }
+    cellDeg[0] - 1 => motif[32 + 9];       // approach note from below
+    cellDeg[0] => motif[32 + 10];
+    cellDeg[1] => motif[32 + 12];
+
+    // --- Bar 4: half the cell, then resolve to the root and breathe ---
+    cellDeg[1] => motif[48];
+    cellDeg[0] + 1 => motif[51];
+    0 => int home;
+    if(cellDeg[0] >= 4) 7 => home;          // nearest root (octave above for high cells)
+    home => motif[56];
+
+    // --- BASS LINE: same cell intervals, locked to the kick (steps 0 and 10) ---
+    0 => bassLine[0];  leap1 => bassLine[10];
+    0 => bassLine[16];
+    if(varType == 0) leap1 + 2 => bassLine[26];
+    else if(varType == 1) 0 - leap1 => bassLine[26];
+    else res + leap1 => bassLine[26];
+    // Bar 3: busier, mirrors the lead's development
+    0 => bassLine[32]; leap1 => bassLine[38]; leap1 + res => bassLine[42]; -1 => bassLine[46];
+    // Bar 4: roots, resolving
+    0 => bassLine[48]; 0 => bassLine[58];
+
+    (s / 11) % 3 => compType;
+    s % 3 => arrType;
+    setArrangement(arrType);
 
     0 => phraseStep;
     1 => motifGenerated;
@@ -196,20 +286,21 @@ fun void generateMotif() {
 0 => int autoSection;
 0 => int autoSectionBar;
 0 => int autoActive;
-[0, 10, 8, 6, 2] @=> int autoSectionLen[];
-[1, 2, 3, 4, 0] @=> int autoNextSection[];
 
 // ============ MASTER BUS + REVERB ============
 Gain masterOut => HPF fxHPF => dac;
 20.0 => fxHPF.freq; 0.7 => fxHPF.Q;
 Gain master => Gain dryOut => masterOut;
 0.0 => master.gain;
-// Warm reverb — longer tails for lofi
-master => DelayL rv1 => Gain rvFb1 => LPF rvF1 => Gain rvMix => masterOut;
-master => DelayL rv2 => Gain rvFb2 => LPF rvF2 => rvMix;
-master => DelayL rv3 => Gain rvFb3 => LPF rvF3 => rvMix;
-master => DelayL rv4 => Gain rvFb4 => LPF rvF4 => rvMix;
-rvFb1 => rv3; rvFb2 => rv4; rvFb3 => rv1; rvFb4 => rv2;
+// Warm reverb — longer tails for lofi. The send is high-passed so kick and
+// bass stay dry and tight; the feedback runs through the LPFs so tails darken.
+master => HPF rvSend => blackhole;
+220.0 => rvSend.freq;
+rvSend => DelayL rv1 => Gain rvFb1 => LPF rvF1 => Gain rvMix => masterOut;
+rvSend => DelayL rv2 => Gain rvFb2 => LPF rvF2 => rvMix;
+rvSend => DelayL rv3 => Gain rvFb3 => LPF rvF3 => rvMix;
+rvSend => DelayL rv4 => Gain rvFb4 => LPF rvF4 => rvMix;
+rvF1 => rv3; rvF2 => rv4; rvF3 => rv1; rvF4 => rv2;
 0.18::second => rv1.max; 0.1573::second => rv1.delay;
 0.25::second => rv2.max; 0.2137::second => rv2.delay;
 0.32::second => rv3.max; 0.2891::second => rv3.delay;
@@ -250,47 +341,61 @@ if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
     <<< "Beatpilot [lofi]: no samples found, using synthesis" >>>;
 }
 
-// Jazzier scales: major 7, minor 7, dorian, lydian
-[[0,2,4,7,11], [0,3,5,7,10], [0,2,3,5,9], [0,2,4,6,7]] @=> int scales[][];
-
-fun int note(int degree, int octave) {
-    scales[scaleType] @=> int scl[];
-    if(degree < 0) return 0;
-    return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
-}
-
 // ============ VELOCITY MAPS ============
-[1.0, 0.0, 0.5, 0.0, 0.9, 0.0, 0.4, 0.0, 0.95, 0.0, 0.45, 0.0, 0.85, 0.0, 0.55, 0.3] @=> float kickVel[];
+[1.0, 0.0, 0.5, 0.0, 0.9, 0.0, 0.4, 0.6, 0.95, 0.0, 0.8, 0.0, 0.85, 0.0, 0.55, 0.3] @=> float kickVel[];
 [0.7, 0.25, 0.5, 0.25, 0.8, 0.25, 0.5, 0.3, 0.7, 0.25, 0.5, 0.25, 0.8, 0.3, 0.5, 0.35] @=> float hatVel[];
 
-// ============ KICK (soft, round) ============
+// ============ KICK (soft, round — sample-accurate envelope in its own shred) ============
 SinOsc kickOsc => LPF kickLPF => Gain kickG => master;
 0.0 => kickOsc.gain;
-200.0 => kickLPF.freq;
-0.25 => kickG.gain;
-0.0 => float kickPh;
+300.0 => kickLPF.freq;
+0.5 => kickG.gain;
+0 => int kickId;
 
-[[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
- [1,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0],
- [1,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0]] @=> int kPat[][];
+fun void kickShred(float amp, int id) {
+    0.0 => kickOsc.phase;
+    for(0 => int i; i < 320; i++) {
+        if(id != kickId) return; // a newer kick took over
+        i / 1000.0 => float t;
+        50.0 + 65.0 * Math.exp(-t * 30.0) => kickOsc.freq;
+        amp * Math.exp(-t * 11.0) => kickOsc.gain;
+        1::ms => now;
+    }
+    if(id == kickId) 0.0 => kickOsc.gain;
+}
+
+// Boom-bap: kick on 1 and the "and" of 3; energy 3 adds the lazy swung "a" of 2
+[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+ [1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],
+ [1,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],
+ [1,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0]] @=> int kPat[][];
 
 // ============ SNARE (brushy) ============
 Noise snN => BPF snBP => ADSR snEnv => Gain snG => master;
-2200.0 => snBP.freq; 0.8 => snBP.Q;
-snEnv.set(1::ms, 100::ms, 0.02, 60::ms);
+1900.0 => snBP.freq; 0.8 => snBP.Q;
+snEnv.set(1::ms, 130::ms, 0.0, 60::ms);
 0.0 => snG.gain;
 
+fun void snareShred(float g, dur lag) {
+    lag => now;
+    g * 3.5 => snG.gain;
+    snEnv.keyOn();
+}
+fun void snHit(float g, dur lag) {
+    if(useSamples) snG.gain() * 0.3 => g;
+    spork ~ snareShred(g, lag);
+}
+
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+ [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],
  [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],
  [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0]] @=> int snPat[][];
 
-// Ghost brush hits
+// Ghost brush hits (odd steps = swung)
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1],
- [0,0,1,0,0,0,0,1,0,0,1,0,0,0,0,1]] @=> int snGhost[][];
+ [0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1],
+ [0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1]] @=> int snGhost[][];
 
 // ============ HATS (soft, shuffled) ============
 Noise chN => BPF chBP => ADSR chEnv => Gain chG => master;
@@ -298,59 +403,99 @@ Noise chN => BPF chBP => ADSR chEnv => Gain chG => master;
 chEnv.set(0.5::ms, 25::ms, 0.0, 10::ms);
 0.03 => chG.gain;
 
-[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0],
- [0,0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]] @=> int chPat[][];
+fun void hatShred(float g, dur lag) {
+    lag => now;
+    g * 3.0 => chG.gain;
+    chEnv.keyOn();
+}
+fun void chHit(float g) {
+    spork ~ hatShred(g, Math.random2f(0.0, 8.0)::ms);
+}
 
-// ============ BASS (warm sine, follows chords) ============
-SinOsc bassOsc => LPF bassFilt => Gain bassG => master;
+// 8ths; energy 3 adds swung 16th ghosts so the shuffle is audible
+[[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+ [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],
+ [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0],
+ [1,0,1,1,1,0,1,0,1,0,1,1,1,0,1,1]] @=> int chPat[][];
+
+// ============ BASS (warm sine + soft triangle, plucked envelope) ============
+SinOsc bassOsc => ADSR bassEnv => LPF bassFilt => Gain bassG => master;
+TriOsc bassTri => bassEnv;
 0.6 => bassOsc.gain;
-600.0 => bassFilt.freq; 1.5 => bassFilt.Q;
+0.12 => bassTri.gain;
+bassEnv.set(6::ms, 350::ms, 0.55, 90::ms);
+600.0 => bassFilt.freq; 1.0 => bassFilt.Q;
 0.0 => bassG.gain;
 0.0 => float bassAmpTarget;
 0.0 => float bassAmpCurrent;
-
 600.0 => float bassFiltTarget;
+-1 => int bassOffStep;
 
-// ============ KEYS (ModalBar — vibraphone, jazzy shimmer) ============
-ModalBar key1 => LPF keyFilt => Gain keyG => master;
-ModalBar key2 => keyFilt;
-ModalBar key3 => keyFilt;
-ModalBar key4 => keyFilt; // 7th voice for jazzy color
-1 => key1.preset; 1 => key2.preset; 1 => key3.preset; 1 => key4.preset; // vibraphone
-3500.0 => keyFilt.freq; 0.5 => keyFilt.Q;
+// ============ KEYS (Rhodes chords, rolled, voice-led) ============
+Rhodey kv[4];
+LPF keyFilt => Gain keyG => master;
+for(0 => int i; i < 4; i++) kv[i] => keyFilt;
+2600.0 => keyFilt.freq; 0.6 => keyFilt.Q;
 0.0 => keyG.gain;
 0.0 => float keyAmpTarget;
 0.0 => float keyAmpCurrent;
-3500.0 => float keyFiltTarget;
+2600.0 => float keyFiltTarget;
 0.0 => float keyLfoPhase;
 
-// ============ LEAD (Rhodey electric piano — the classic lofi melodic voice) ============
-Rhodey ldRhodey => LPF ldFilt => Gain ldDry => master;
-1800.0 => ldFilt.freq; 0.7 => ldFilt.Q;
+fun void strumShred(int a, int b, int c, int d, float vel) {
+    [a, b, c, d] @=> int v[];
+    for(0 => int i; i < 4; i++) {
+        Std.mtof(v[i]) => kv[i].freq;
+        vel * (1.0 - i * 0.06) => kv[i].noteOn;
+        Math.random2f(9.0, 16.0)::ms => now; // rolled, like a player's hand
+    }
+}
+fun void strike(int v[], float vel) {
+    spork ~ strumShred(v[0], v[1], v[2], v[3], vel);
+}
+
+// ============ LEAD (vibraphone above the Rhodes, quarter-note echo) ============
+ModalBar ld => LPF ldFilt => Gain ldDry => master;
+1 => ld.preset; // vibraphone
+3200.0 => ldFilt.freq; 0.7 => ldFilt.Q;
 0.0 => ldDry.gain;
-1800.0 => float ldFiltTarget;
+3200.0 => float ldFiltTarget;
 0.0 => float ldAmpTarget;
 0.0 => float ldAmpCurrent;
 
-// Lead delay: quarter note for lofi feel
-ldDry => DelayL ldDly => Gain ldDlyFb => LPF ldDlyF => master;
-ldDlyFb => ldDly;
-(stepDur * 4) => ldDly.max => ldDly.delay; // quarter note delay
+// Lead delay: quarter note, darkened feedback
+ldDry => DelayL ldDly => LPF ldDlyF => Gain ldDlyOut => master;
+ldDlyF => Gain ldDlyFb => ldDly;
+(stepDur * 8) => ldDly.max;
+(stepDur * 4) => ldDly.delay; // quarter note delay
 0.35 => ldDlyFb.gain;
-0.04 => ldDly.gain;
-1800.0 => ldDlyF.freq; // darker delay for warmth
+0.40 => ldDlyOut.gain;
+2200.0 => ldDlyF.freq; // darker delay for warmth
 
 // ============ VINYL CRACKLE ============
-// Two layers: low rumble (turntable motor) + intermittent pops (dust/scratches)
-Noise vinyl => BPF vinylBP => Gain vinylG => master;
-4500.0 => vinylBP.freq; 4.0 => vinylBP.Q; // narrow, high — crackly pops not hiss
-0.0 => vinylG.gain;
-// Second layer: low-end rumble for that turntable warmth
+// Sparse clicks + a whisper of hiss + turntable rumble, all very quiet
+Impulse vinylImp => HPF vinylHP => Gain vinylG => master;
+1500.0 => vinylHP.freq;
+Noise vinylHiss => BPF vinylBP => vinylG;
+5000.0 => vinylBP.freq; 0.6 => vinylBP.Q;
+0.012 => vinylHiss.gain;
 Noise vinylRumble => LPF vinylLPF => Gain vinylRumbleG => master;
-120.0 => vinylLPF.freq; 1.0 => vinylLPF.Q;
+90.0 => vinylLPF.freq; 1.0 => vinylLPF.Q;
+0.0 => vinylG.gain;
 0.0 => vinylRumbleG.gain;
+
+fun void vinylShred() {
+    while(true) {
+        Math.random2f(25.0, 260.0)::ms => now;
+        if(vinylG.gain() > 0.0) {
+            Math.random2f(0.2, 1.0) => float a;
+            if(Math.random2(0, 12) == 0) a * 2.0 => a; // occasional bigger pop
+            if(Math.random2(0, 1)) -1.0 *=> a;
+            a => vinylImp.next;
+        }
+    }
+}
+spork ~ vinylShred();
 
 // ============ STATE FILE READER ============
 fun void readState() {
@@ -380,6 +525,8 @@ fun void readState() {
         0 => phraseRepeat;
         for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
         progs[progIdx][0] => chordRoot;
+        0 => pushed;
+        -1 => keysChord;
         generateMotif();
         }
 
@@ -412,21 +559,13 @@ fun void readState() {
             }
 
             if(energy >= 1) {
-                0.06 => snG.gain;
-                0.10 => bassG.gain;
-                0.007 => vinylG.gain;
-                0.003 => vinylRumbleG.gain;
-            }
-            if(energy >= 2) {
-                0.05 => keyAmpTarget;
-            } else {
-                0.0 => keyAmpTarget;
+                0.03 => vinylG.gain;
+                0.002 => vinylRumbleG.gain;
             }
         }
     }
 }
 
-// ============ MAIN SEQUENCER ============
 // ============ NOW PLAYING (read by the Claude Code mod) ============
 fun void writeNow() {
     if(nowPath == "") return;
@@ -469,6 +608,7 @@ fun void writeNow() {
     nf.close();
 }
 
+// ============ MAIN SEQUENCER ============
 while(true) {
     stepCount % 16 => int s;
     if(s == 1) writeNow(); // after the bar boundary settled
@@ -492,26 +632,26 @@ while(true) {
             for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
             if(phraseRepeat % 3 == 2 && energy >= 2) {
                 (seed * 13 + phraseRepeat) % 4 => int subIdx;
-                // Jazz sub: move chord up a 3rd (tritone-ish in scale)
-                (progs[progIdx][subIdx] + 3) % 5 => chordSub[subIdx];
+                // Jazz sub: diatonic chord a 3rd up (I->iii, ii->IV, IV->vi)
+                (progs[progIdx][subIdx] + 2) % 7 => chordSub[subIdx];
             }
+            // Odd passes use a different layer plan so the track evolves
+            if(motifGenerated) setArrangement((arrType + phraseRepeat) % 3);
         }
         phraseBar / 4 => chordIdx;
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
-        progs[progIdx][chordIdx] => chordRoot;
-        if(chordSub[chordIdx] >= 0) chordSub[chordIdx] => chordRoot;
+        chordAt(phraseBar) => chordRoot;
+        setChordPcs(chordRoot);
 
         // Energy decay
         if(barsSinceEvent > 8 && energy > 0) {
             energy - 1 => energy;
             0 => barsSinceEvent;
-            if(energy < 2) 0.0 => keyAmpTarget;
             if(energy < 1) {
-                0.0 => snG.gain;
-                0.0 => bassG.gain;
                 0.0 => vinylG.gain;
                 0.0 => vinylRumbleG.gain;
                 0.0 => ldAmpTarget;
+                0.0 => bassAmpTarget;
             }
         }
 
@@ -550,8 +690,12 @@ while(true) {
         // Trigger at bar 12 (~40% chance), runs 4 bars to end of phrase
         if(fxType == 0 && energy >= 2 && motifGenerated && phraseBar == 12 && !introActive) {
             (seed * 7 + stepCount / 320) % 5 => int fxRoll;
-            if(fxRoll <= 2) {
+            if(fxRoll <= 1) {
                 fxRoll + 1 => fxType;
+                0 => fxBar;
+                4 => fxLen;
+            } else if(fxRoll == 2) {
+                3 => fxType;
                 0 => fxBar;
                 4 => fxLen;
             }
@@ -560,7 +704,7 @@ while(true) {
         if(fxType > 0) {
             fxBar + 1 => fxBar;
             if(fxBar > fxLen) {
-                // Release — snap back
+                // Release — decays back below
                 0 => fxType; 0 => fxBar;
             } else {
                 fxBar $ float / fxLen $ float => float p; // 0.25 to 1.0
@@ -575,19 +719,18 @@ while(true) {
                 } else if(fxType == 3) {
                     // Delay feedback swell: echoes spiral
                     0.35 + p * 0.25 => ldDlyFb.gain;
-                    0.04 + p * 0.03 => ldDly.gain;
+                    0.40 + p * 0.25 => ldDlyOut.gain;
                 }
             }
         }
         // FX release: restore base values when done
         if(fxType == 0 && !introActive) {
             // Smooth HPF back to 20Hz (done in substeps)
-            // Restore reverb/delay base values gradually
             if(rvMix.gain() > 0.23) rvMix.gain() * 0.95 + 0.22 * 0.05 => rvMix.gain;
             if(rvFb1.gain() > 0.43) rvFb1.gain() * 0.95 + 0.42 * 0.05 => rvFb1.gain;
             if(rvFb2.gain() > 0.41) rvFb2.gain() * 0.95 + 0.40 * 0.05 => rvFb2.gain;
             if(ldDlyFb.gain() > 0.36) ldDlyFb.gain() * 0.95 + 0.35 * 0.05 => ldDlyFb.gain;
-            if(ldDly.gain() > 0.041) ldDly.gain() * 0.95 + 0.04 * 0.05 => ldDly.gain;
+            if(ldDlyOut.gain() > 0.41) ldDlyOut.gain() * 0.95 + 0.40 * 0.05 => ldDlyOut.gain;
         }
     }
 
@@ -598,28 +741,27 @@ while(true) {
             0 => smpKick.pos;
             0.20 + 0.15 * (kickVel[s] + velDrift) => smpKickG.gain;
         }
-        0.0 => kickPh;
-        0.4 + 0.2 * (kickVel[s] + velDrift) => kickOsc.gain;
-        if(useSamples) kickOsc.gain() * 0.3 => kickOsc.gain; // blend: quieter synth when samples active
+        0.4 + 0.2 * (kickVel[s] + velDrift) => float kAmp;
+        if(useSamples) kAmp * 0.3 => kAmp; // blend: quieter synth when samples active
+        kickId + 1 => kickId;
+        spork ~ kickShred(kAmp, kickId);
     }
 
-    // ---- SNARE (brush + ghost) ----
+    // ---- SNARE (brush + ghost, laid back behind the beat) ----
     if(snPat[energy][s]) {
         if(useSamples) {
             0 => smpSnare.pos;
             0.15 + 0.10 * hatVel[s] => smpSnareG.gain;
         }
-        0.05 + 0.03 * hatVel[s] => snG.gain;
-        if(useSamples) snG.gain() * 0.3 => snG.gain;
-        snEnv.keyOn();
+        0.05 + 0.03 * hatVel[s] => float sg;
+        if(energy == 1) sg * 0.7 => sg;
+        snHit(sg, snareLag);
     } else if(snGhost[energy][s]) {
         if(useSamples) {
             0 => smpSnareGhost.pos;
             0.06 => smpSnareGhostG.gain;
         }
-        0.02 => snG.gain;
-        if(useSamples) snG.gain() * 0.3 => snG.gain;
-        snEnv.keyOn();
+        snHit(0.02, snareLag);
     }
 
     // ---- HATS (with velocity + humanization) ----
@@ -629,24 +771,20 @@ while(true) {
             0 => smpHat.pos;
             0.10 + 0.10 * (hatVel[s] + hVelDrift) => smpHatG.gain;
         }
-        0.015 + 0.025 * (hatVel[s] + hVelDrift) => chG.gain;
-        if(useSamples) chG.gain() * 0.3 => chG.gain;
-        chEnv.keyOn();
+        0.010 + 0.022 * (hatVel[s] + hVelDrift) => float hg;
+        if(s % 2 == 1) hg * 0.5 => hg;           // swung 16th ghosts
+        if(energy == 1) hg * 0.6 => hg;
+        if(useSamples) hg * 0.3 => hg;
+        chHit(hg);
     }
 
     // ---- DRUM MICRO-VARIATION (seed-deterministic per-bar mutations) ----
     if(energy >= 2) {
         (seed + phraseBar * 7) % 8 => int drumVar;
         // Extra ghost hat on an empty step
-        if(drumVar < 3 && s == 5 && !chPat[energy][s]) {
-            0.012 => chG.gain;
-            chEnv.keyOn();
-        }
+        if(drumVar < 3 && s == 5 && !chPat[energy][s]) chHit(0.010);
         // Extra ghost brush on an empty step
-        if(drumVar >= 5 && s == 11 && !snPat[energy][s] && !snGhost[energy][s]) {
-            0.015 => snG.gain;
-            snEnv.keyOn();
-        }
+        if(drumVar >= 5 && s == 11 && !snPat[energy][s] && !snGhost[energy][s]) snHit(0.015, snareLag);
     }
 
     // ---- DRUM FILL (brush rolls at phrase boundaries) ----
@@ -654,18 +792,13 @@ while(true) {
         if(drumFill == 2) {
             // Big fill (end of 16-bar phrase): brush roll builds through bar
             if(s >= 4 && s % 2 == 0 && !snPat[energy][s] && !snGhost[energy][s]) {
-                0.02 + (s $ float) / 16.0 * 0.04 => snG.gain;
-                snEnv.keyOn();
+                snHit(0.02 + (s $ float) / 16.0 * 0.04, snareLag);
             }
-            if(s >= 8 && !chPat[energy][s]) {
-                0.01 + (s $ float) / 16.0 * 0.02 => chG.gain;
-                chEnv.keyOn();
-            }
+            if(s >= 8 && !chPat[energy][s]) chHit(0.01 + (s $ float) / 16.0 * 0.02);
         } else {
             // Small fill (end of 4-bar chord): ghost brush flurry in last quarter
-            if(s >= 12 && s % 2 == 0 && !snPat[energy][s] && !snGhost[energy][s]) {
-                0.02 + (s - 12) / 8.0 * 0.02 => snG.gain;
-                snEnv.keyOn();
+            if(s >= 13 && s % 2 == 1 && !snPat[energy][s] && !snGhost[energy][s]) {
+                snHit(0.02 + (s - 12) / 8.0 * 0.02, snareLag);
             }
         }
     }
@@ -673,73 +806,110 @@ while(true) {
     // ---- ARRANGEMENT: determine what plays this bar ----
     0 => int arrLevel;
     if(motifGenerated) arrangement[phraseBar] => arrLevel;
-    if(energy < 2) { if(arrLevel > 1) 1 => arrLevel; }
+    if(energy < 2) { if(arrLevel > 2) 2 => arrLevel; }
+    if(energy == 0) { if(arrLevel > 1) 1 => arrLevel; }
 
     // ---- BASS (cell-derived, follows arrangement) ----
+    if(phraseStep == bassOffStep) { bassEnv.keyOff(); -1 => bassOffStep; }
     if(energy >= 1 && arrLevel >= 1 && motifGenerated) {
         bassLine[phraseStep % PHRASE_LEN] => int bDeg;
-        if(bDeg >= 0) {
-            (bDeg + chordRoot) % 5 => bDeg;
-            if(bDeg < 0) bDeg + 5 => bDeg;
-            Std.mtof(note(bDeg, 2)) => bassOsc.freq;
+        // Sparse bars: roots only on the downbeats
+        if(arrLevel == 1 && phraseStep % 16 != 0) REST => bDeg;
+        if(bDeg != REST) {
+            // Chord root in B1..A#2, passing tones measured from it
+            note(chordRoot, 2) => int rr;
+            while(rr < 35) rr + 12 => rr;
+            while(rr > 46) rr - 12 => rr;
+            rr + note(chordRoot + bDeg, 2) - note(chordRoot, 2) => int bMidi;
+            fixAvoid(bMidi) => bMidi;
+            Std.mtof(bMidi) => bassOsc.freq;
+            Std.mtof(bMidi) => bassTri.freq;
+            bassEnv.keyOn();
+            // Release just before the next bass note (max 6 steps)
+            1 => int len;
+            while(len < 6 && bassLine[(phraseStep + len) % PHRASE_LEN] == REST) len++;
+            if(len > 1) len - 1 => len;
+            (phraseStep + len) % PHRASE_LEN => bassOffStep;
             // Bass filter: gentle, opens slightly in bar 3
             if(phraseStep >= 32 && phraseStep < 48) {
                 800.0 + Math.random2f(0.0, 200.0) => bassFiltTarget;
             } else {
                 500.0 + Math.random2f(0.0, 100.0) => bassFiltTarget;
             }
-            0.10 => bassAmpTarget;
+            0.13 => bassAmpTarget;
+        }
+    } else {
+        0.0 => bassAmpTarget;
+    }
+
+    // ---- KEYS (Rhodes, voice-led, comping rhythm, phrase dynamics) ----
+    if(motifGenerated) {
+        if(s == 0) {
+            if(keysChord != chordRoot) {
+                buildVoicing(chordRoot, voicing, nextVoicing);
+                for(0 => int i; i < 4; i++) nextVoicing[i] => voicing[i];
+                chordRoot => keysChord;
+                0 => pushed; // the push guessed a different chord: strike the real one
+            }
+            // Keys dynamics follow phrase position: gentle, gentle, peak, pull back
+            phraseBar % 4 => int barInChord;
+            if(barInChord < 2) 0.04 => keyAmpTarget;
+            else if(barInChord == 2) 0.07 => keyAmpTarget;
+            else 0.03 => keyAmpTarget;
+            if(energy >= 3) keyAmpTarget * 1.3 => keyAmpTarget;
+            if(energy == 0) keyAmpTarget * 0.8 => keyAmpTarget;
+            2000.0 + barInChord * 250.0 => keyFiltTarget;   // filter opens through the chord
+            if(!pushed) strike(voicing, 0.55);
+            0 => pushed;
+        } else if(arrLevel >= 2) {
+            // Comping: a softer re-strike, and the classic early "push" into the next chord
+            (s == 10 && compType == 1) || (s == 6 && compType == 2) => int restrike;
+            if(restrike) strike(voicing, 0.35);
+            if(s == 14 && phraseBar % 4 == 3 && compType != 1) {
+                chordAt((phraseBar + 1) % 16) => int nr;
+                if(phraseBar == 15) progs[progIdx][0] => nr; // next phrase restarts; subs reset
+                fixRoot(nr) => nr;
+                if(nr != chordRoot) {
+                    buildVoicing(nr, voicing, nextVoicing);
+                    for(0 => int i; i < 4; i++) nextVoicing[i] => voicing[i];
+                    nr => keysChord;
+                    strike(voicing, 0.5);
+                    1 => pushed;
+                }
+            }
         }
     }
 
-    // ---- KEYS (ModalBar vibraphone, follows arrangement + phrase dynamics) ----
-    if(s == 0 && arrLevel >= 2) {
-        Std.mtof(note(chordRoot, 3)) => key1.freq;
-        Std.mtof(note(chordRoot + 2, 3)) => key2.freq;
-        Std.mtof(note(chordRoot + 4, 3)) => key3.freq;
-        Std.mtof(note(chordRoot + 6, 3)) => key4.freq; // jazzy 7th
-        0.45 => key1.strikePosition;
-        0.5 => key2.strikePosition;
-        0.55 => key3.strikePosition;
-        0.4 => key4.strikePosition;
-        0.6 => key1.strike;
-        0.6 => key2.strike;
-        0.5 => key3.strike;
-        0.45 => key4.strike;
-        // Keys dynamics follow phrase position: swell bars 1-2, peak bar 3, pull back bar 4
-        phraseBar % 4 => int barInChord;
-        if(barInChord < 2) 0.04 => keyAmpTarget;       // bars 1-2: gentle
-        else if(barInChord == 2) 0.08 => keyAmpTarget;  // bar 3: peak
-        else 0.03 => keyAmpTarget;                       // bar 4: pull back
-        if(energy >= 3) keyAmpTarget * 1.3 => keyAmpTarget;
-        2800.0 + barInChord * 200.0 => keyFiltTarget;   // filter opens through phrase
-    } else if(arrLevel < 2) {
-        0.0 => keyAmpTarget;
-    }
-
-    // ---- LEAD (cell motif, Rhodey electric piano, follows arrangement) ----
+    // ---- LEAD (cell motif, vibraphone, follows arrangement) ----
     if(motifGenerated && arrLevel >= 3) {
         motif[phraseStep % PHRASE_LEN] => int deg;
         // Motif variation: each repetition of the 4-bar motif gets subtle changes
         phraseBar / 4 => int motifRep;
-        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => deg; // drop a note
-        if(motifRep == 3 && deg >= 0 && phraseStep % 8 == 6) deg - 1 => deg; // approach from below
-        if(deg >= 0) {
-            (deg + chordRoot) % 5 => deg;
-            if(deg < 0) deg + 5 => deg;
-            4 => int ldOct;
-            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) 5 => ldOct; // octave jump on peak
-            Std.mtof(note(deg, ldOct)) => ldRhodey.freq;
-            // Velocity: phrase contour via noteOn velocity
+        if(motifRep == 1 && deg != REST && (seed + phraseStep) % 5 == 0) REST => deg; // drop a note
+        if(motifRep == 3 && deg != REST && phraseStep % 8 == 6) deg - 1 => deg; // approach from below
+        if(deg != REST) {
+            // Chord root in the lead register, chosen closest to the last one
+            note(chordRoot, 5) => int lr;
+            while(lr - leadAnchor > 6) lr - 12 => lr;
+            while(leadAnchor - lr > 6) lr + 12 => lr;
+            if(lr < 62) lr + 12 => lr;
+            if(lr > 73) lr - 12 => lr;
+            lr => leadAnchor;
+            lr + note(chordRoot + deg, 5) - note(chordRoot, 5) => int ldMidi;
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48 && ldMidi + 12 <= 86) ldMidi + 12 => ldMidi; // octave jump on peak
+            fixAvoid(ldMidi) => ldMidi;
+            if(phraseStep % 4 == 0) snapStrong(ldMidi) => ldMidi;
+            Std.mtof(ldMidi) => ld.freq;
+            // Velocity: phrase contour
             phraseStep % 16 => int localStep;
-            0.35 => float ldVel;
-            if(localStep % 4 == 0) 0.5 => ldVel;
+            0.45 => float ldVel;
+            if(localStep % 4 == 0) 0.6 => ldVel;
             if(phraseStep >= 32 && phraseStep < 48) ldVel * 1.15 => ldVel;
-            if(phraseStep >= 48) ldVel * 0.6 => ldVel;
-            ldVel => ldRhodey.noteOn;
-            1800.0 + Math.random2f(0.0, 400.0) => ldFiltTarget;
-            0.05 => ldAmpTarget;
+            if(phraseStep >= 48) ldVel * 0.7 => ldVel;
+            ldVel => ld.noteOn;
+            2800.0 + Math.random2f(0.0, 600.0) => ldFiltTarget;
         }
+        0.7 => ldAmpTarget;
     } else if(arrLevel < 3) {
         0.0 => ldAmpTarget;
     }
@@ -760,22 +930,13 @@ while(true) {
 
     // ---- SUBSTEP UPDATES ----
     for(0 => int sub; sub < SUBSTEPS; sub++) {
-        // Kick: softer, rounder envelope
-        if(kickOsc.gain() > 0.005) {
-            45.0 + 50.0 * Math.exp(-kickPh * 6.0) => kickOsc.freq;
-            kickOsc.freq() * 3.0 => kickLPF.freq;
-            kickOsc.gain() * 0.96 => kickOsc.gain;
-            kickPh + 0.06 => kickPh;
-        } else { 0.0 => kickOsc.gain; }
-
-        // Bass amplitude + filter
-        bassAmpCurrent + (bassAmpTarget - bassAmpCurrent) * 0.04 => bassAmpCurrent;
+        // Bass level + filter
+        bassAmpCurrent + (bassAmpTarget - bassAmpCurrent) * 0.05 => bassAmpCurrent;
         bassAmpCurrent => bassG.gain;
-        if(bassAmpTarget > 0.01) bassAmpTarget * 0.997 => bassAmpTarget;
         bassFilt.freq() + (bassFiltTarget - bassFilt.freq()) * 0.08 => bassFilt.freq;
         if(bassFiltTarget > 400.0) bassFiltTarget * 0.998 => bassFiltTarget;
 
-        // Keys: filter LFO — Wurley handles timbre, we just shape brightness
+        // Keys: filter LFO — Rhodes handles timbre, we just shape brightness
         // Dynamic LFO rate: faster during builds, slower during breakdowns
         0.0008 => float keyLfoRate;
         if(arrLevel >= 3) keyLfoRate * 1.4 => keyLfoRate;
@@ -783,29 +944,17 @@ while(true) {
         if(phraseBar >= 12) keyLfoRate * 0.7 => keyLfoRate;
         keyLfoPhase + keyLfoRate => keyLfoPhase;
         keyAmpCurrent + (keyAmpTarget - keyAmpCurrent) * 0.008 => keyAmpCurrent;
-        keyAmpCurrent => keyG.gain;
+        keyAmpCurrent * 4.5 => keyG.gain; // Rhodey output is quiet: bus make-up
         if(keyAmpTarget > 0.005) keyAmpTarget * 0.9992 => keyAmpTarget;
-        Math.sin(keyLfoPhase) * 150.0 => float keyLfoMod;
+        Math.sin(keyLfoPhase) * 300.0 => float keyLfoMod;
         keyFilt.freq() + ((keyFiltTarget + keyLfoMod) - keyFilt.freq()) * 0.008 => keyFilt.freq;
-        if(keyFiltTarget > 2000.0) keyFiltTarget * 0.99995 => keyFiltTarget;
+        if(keyFiltTarget > 1600.0) keyFiltTarget * 0.99995 => keyFiltTarget;
 
-        // Lead Rhodey envelope — Rhodey has its own decay, we just control the gain bus
+        // Lead bus: fades in/out with the arrangement (the vibraphone decays itself)
         ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.03 => ldAmpCurrent;
         ldAmpCurrent => ldDry.gain;
-        if(ldAmpTarget > 0.003) ldAmpTarget * 0.993 => ldAmpTarget;
         ldFilt.freq() + (ldFiltTarget - ldFilt.freq()) * 0.02 => ldFilt.freq;
-        if(ldFiltTarget > 600.0) ldFiltTarget * 0.999 => ldFiltTarget;
-
-        // Vinyl crackle: intermittent pops, not continuous hiss
-        if(vinylG.gain() > 0.001) {
-            // Random pops: most of the time silent, occasional sharp crack
-            if(Math.random2(0, 40) == 0) {
-                0.008 + Math.random2f(0.0, 0.006) => vinylG.gain; // pop!
-                2000.0 + Math.random2f(0.0, 6000.0) => vinylBP.freq; // vary the pop character
-            } else {
-                vinylG.gain() * 0.7 => vinylG.gain; // rapid decay between pops
-            }
-        }
+        if(ldFiltTarget > 1600.0) ldFiltTarget * 0.999 => ldFiltTarget;
 
         // FX: smooth HPF back toward 20Hz when not active (skip during intro + HPF sweep)
         if(fxType != 1 && !introActive) fxHPF.freq() + (20.0 - fxHPF.freq()) * 0.04 => fxHPF.freq;
