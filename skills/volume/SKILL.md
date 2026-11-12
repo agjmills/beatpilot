@@ -1,7 +1,7 @@
 ---
 name: volume
 description: Set Beatpilot volume (0-100)
-user_invocable: true
+user-invocable: true
 ---
 
 Run the Beatpilot volume control. Pass any arguments the user provided:

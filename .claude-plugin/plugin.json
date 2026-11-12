@@ -1,8 +1,51 @@
 {
   "name": "beatpilot",
-  "description": "Generative music that plays while you code. Eight genres of real-time ChucK synthesis (techno, dnb, lofi, reggae, dub, goa, piano, ambient) with optional CC0 sample blends. Music evolves based on what your AI assistant is doing — prompts, tool calls, agents, and errors shape the key, scale, energy, and melody.",
+  "description": "Generative music that plays while you code. Eight genres of real-time ChucK synthesis (techno, dnb, lofi, reggae, dub, goa, piano, ambient) with optional CC0 sample blends. Music evolves based on what your AI assistant is doing \u2014 prompts, tool calls, agents, and errors shape the key, scale, energy, and melody.",
   "version": "0.3.0",
   "author": {
     "name": "Alex"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "genre": {
+      "type": "string",
+      "title": "Genre",
+      "description": "Which engine plays: techno, dnb, lofi, reggae, dub, goa, piano or ambient",
+      "default": "techno",
+      "options": [
+        "techno",
+        "dnb",
+        "lofi",
+        "reggae",
+        "dub",
+        "goa",
+        "piano",
+        "ambient"
+      ]
+    },
+    "statusLine": {
+      "type": "boolean",
+      "title": "Now playing in the status line",
+      "description": "Show genre, key, energy and bar in the status line",
+      "default": true
+    },
+    "band": {
+      "type": "boolean",
+      "title": "Phrase meter above the prompt",
+      "description": "A one-line view of the 16-bar phrase above the prompt while music plays",
+      "default": false
+    },
+    "tunePerPrompt": {
+      "type": "boolean",
+      "title": "New tune per prompt",
+      "description": "Each new prompt gets its own key and melody (applied at the next phrase). Off: one tune per project",
+      "default": true
+    },
+    "headless": {
+      "type": "boolean",
+      "title": "Play in headless sessions",
+      "description": "Also play during claude -p and SDK runs",
+      "default": false
+    }
   }
 }

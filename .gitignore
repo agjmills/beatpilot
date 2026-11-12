@@ -2,3 +2,6 @@
 *.pid
 .DS_Store
 samples/
+.claude-plugin/types/
+node_modules/
+tsconfig.json

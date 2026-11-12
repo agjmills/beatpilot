@@ -1,50 +1,65 @@
 #!/bin/bash
 # Beatpilot core state writer — the shared building block for all adapters.
-# Usage: write-state.sh <energy> [content]
-#   energy:  0-3 (0=silent, 1=calm, 2=active, 3=intense)
-#   content: any string — gets hashed into key, scale, and seed for musical variation
+# Usage:
+#   write-state.sh <energy> [content]   hash content into key/scale/seed
+#   write-state.sh <energy> -           read the content from stdin (no argv limits)
+#   write-state.sh <energy> --keep      change energy only; keep the current tune
+#
+#   energy: 0-3 (0=silent, 1=calm, 2=active, 3=intense)
+#
+# Musical identity (key/scale/seed) should change only when the *task* changes
+# (a new prompt); tool calls should use --keep so the piece can develop. The
+# engines also hold a new tune back until the next 16-bar phrase boundary.
 #
 # Auto-starts the ChucK engine if not already running.
-# Writes /tmp/beatpilot-state atomically.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PID_FILE="/tmp/beatpilot.pid"
-STATE_FILE="/tmp/beatpilot-state"
+# shellcheck source=../lib/paths.sh
+. "$SCRIPT_DIR/lib/paths.sh" || exit 1
 
-# --- Check if disabled ---
-[ -f /tmp/beatpilot-disabled ] && exit 0
+[ -f "$BP_DISABLED" ] && { [ "${2:-}" = "-" ] && cat >/dev/null; exit 0; }
 
-# --- Validate args ---
 energy="${1:-1}"
-content="${2:-beat}"
+case "$energy" in ''|*[!0-9]*) energy=1 ;; esac
+[ "$energy" -gt 3 ] && energy=3
 
-# Clamp energy 0-3
-[ "$energy" -gt 3 ] 2>/dev/null && energy=3
-[ "$energy" -lt 0 ] 2>/dev/null && energy=0
-
-# --- Check dependencies ---
 if ! command -v chuck &>/dev/null; then
     echo "Beatpilot: ChucK not installed. brew install chuck (macOS) or sudo apt install chuck (Linux)" >&2
     exit 1
 fi
 
 # --- Ensure engine is running ---
-if [ ! -f "$PID_FILE" ] || ! kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+if [ ! -f "$BP_PID" ] || ! kill -0 "$(cat "$BP_PID")" 2>/dev/null; then
     "${SCRIPT_DIR}/start.sh" >/dev/null 2>&1
     sleep 0.3
 fi
 
-# --- Hash content for musical variation ---
-hash_hex=$(echo -n "$content" | md5 -q 2>/dev/null || echo -n "$content" | md5sum 2>/dev/null | cut -c1-8)
-hash_hex=$(echo "$hash_hex" | tr -d ' -' | cut -c1-8)
-hash_int=$(printf '%d' "0x${hash_hex}" 2>/dev/null || echo 0)
+hash_of() {
+    { md5 -q 2>/dev/null || md5sum 2>/dev/null; } | tr -d ' -' | cut -c1-8
+}
 
-key=$(( hash_int % 12 ))
-scale_type=$(( (hash_int / 12) % 4 ))
-seed=$(( (hash_int / 48) % 256 ))
-ts=$(date +%s)
+key=""; scale_type=""; seed=""
+if [ "${2:-}" = "--keep" ] && [ -f "$BP_STATE" ]; then
+    { read -r _; read -r key; read -r scale_type; read -r seed; } < "$BP_STATE"
+fi
+if [ -z "$seed" ]; then
+    if [ "${2:-}" = "-" ]; then
+        hash_hex=$(hash_of)
+    elif [ "${2:-}" = "--keep" ]; then
+        hash_hex=$(printf '%s' "$PWD" | hash_of)   # no tune yet: the project's
+    else
+        hash_hex=$(printf '%s' "${2:-beat}" | hash_of)
+    fi
+    hash_int=$(printf '%d' "0x${hash_hex:-0}" 2>/dev/null || echo 0)
+    key=$(( hash_int % 12 ))
+    scale_type=$(( (hash_int / 12) % 4 ))
+    seed=$(( (hash_int / 48) % 256 ))
+fi
+# Engines only compare timestamps for change; add sub-second noise so two
+# writes in the same second both count.
+ts="$(date +%s)$(printf '%03d' $((RANDOM % 1000)))"
 
 # --- Write state atomically ---
-tmp="${STATE_FILE}.$$"
+tmp="${BP_STATE}.$$"
 printf '%d\n%d\n%d\n%d\n%d\n' "$energy" "$key" "$scale_type" "$seed" "$ts" > "$tmp"
-mv -f "$tmp" "$STATE_FILE"
+mv -f "$tmp" "$BP_STATE"

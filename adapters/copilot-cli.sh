@@ -34,9 +34,10 @@
 #   }
 
 ADAPTER_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../lib/paths.sh
+. "$ADAPTER_DIR/../lib/paths.sh" || { cat >/dev/null; exit 0; }
 
-# --- Check if disabled ---
-[ -f /tmp/beatpilot-disabled ] && cat > /dev/null && exit 0
+[ -f "$BP_DISABLED" ] && cat > /dev/null && exit 0
 
 # --- Dependency check (jq required for JSON parsing) ---
 if ! command -v jq &>/dev/null; then
@@ -52,46 +53,34 @@ input=$(cat)
 # The event type is inferred from which hook fired (not in the JSON itself),
 # so we detect based on which fields are present.
 tool_name=$(echo "$input" | jq -r '.toolName // empty' 2>/dev/null)
-tool_args=$(echo "$input" | jq -r '.toolArgs // empty' 2>/dev/null)
 error=$(echo "$input" | jq -r '.error // empty' 2>/dev/null)
 prompt=$(echo "$input" | jq -r '.prompt // empty' 2>/dev/null)
 session_event=$(echo "$input" | jq -r '.sessionEvent // empty' 2>/dev/null)
 
-energy=1
-content=""
+current_energy() {
+    local e=2
+    [ -f "$BP_STATE" ] && read -r e < "$BP_STATE"
+    case "$e" in ''|*[!0-9]*) e=2 ;; esac
+    echo "$e"
+}
 
 if [ -n "$error" ]; then
-    # errorOccurred
-    energy=0
-    content="$error"
+    # errorOccurred: tension (one level down), not silence
+    e=$(current_energy)
+    [ "$e" -gt 1 ] && e=$(( e - 1 ))
+    "${ADAPTER_DIR}/write-state.sh" "$e" --keep
 elif [ -n "$prompt" ]; then
-    # userPromptSubmitted
-    energy=2
-    content="$prompt"
+    # userPromptSubmitted: a new task gets a new tune (content over stdin)
+    printf '%s' "$prompt" | "${ADAPTER_DIR}/write-state.sh" 2 -
 elif [ -n "$tool_name" ]; then
-    # preToolUse or postToolUse
-    content="${tool_name}:${tool_args}"
+    # preToolUse / postToolUse: energy only, keep the tune developing
     case "$tool_name" in
-        # High-energy tools
-        *agent*|*Agent*|*spawn*|*subagent*)
-            energy=3 ;;
-        *bash*|*Bash*|*terminal*|*shell*|*exec*)
-            energy=2 ;;
-        *edit*|*Edit*|*write*|*Write*)
-            energy=2 ;;
-        *)
-            energy=2 ;;
+        *agent*|*Agent*|*spawn*) "${ADAPTER_DIR}/write-state.sh" 3 --keep ;;
+        *)                                  "${ADAPTER_DIR}/write-state.sh" 2 --keep ;;
     esac
 elif [ -n "$session_event" ]; then
-    energy=1
-    content="session"
+    "${ADAPTER_DIR}/write-state.sh" 1 --keep
 else
-    # Fallback: hash whatever we got
-    content=$(echo "$input" | jq -r 'tostring' 2>/dev/null)
-    energy=1
+    "${ADAPTER_DIR}/write-state.sh" 1 --keep
 fi
-
-[ -z "$content" ] && content="copilot-event"
-
-# --- Delegate to shared state writer ---
-"${ADAPTER_DIR}/write-state.sh" "$energy" "$content"
+exit 0

@@ -175,19 +175,24 @@ A fixed LFO rate makes pads sound like static drones. Tie the rate to arrangemen
 - × 0.7 at bars 12-15 (`phraseBar >= 12` = phrase end, calmer)
 
 ### 13. State file interface
-All engines read `/tmp/beatpilot-state` with the same format:
+Engines are started as `chuck genres/<genre>.ck:<run dir>` (see `lib/paths.sh`; without the argument they fall back to the legacy `/tmp/beatpilot-*` files). They read `<run dir>/state`:
 ```
 energy (0-3)
 key (0-11)
 scale (index)
 seed (0-255)
-timestamp
+timestamp (any value that changes per write)
 ```
-Read once per bar (step 0). Only act on new timestamps.
+Read once per bar (step 0):
+- **Energy** acts on every new timestamp.
+- **Tune** (key/scale/seed) is applied only when it differs from the current one, and only at the phrase boundary (`phraseBar == 15` before the advance), or at once when silent. The re-seed sets `phraseBar` to -1 so the advance lands on bar 0. `Math.srandom()` is seeded from the tune so the same events give the same music.
+- `<run dir>/volume` (0-100) is read each bar.
+
+Each bar (step 1) engines write `<run dir>/now` for the Claude Code player: `genre bpm tick energy key seed scale prog chord bar level arr playing volume`, one `name value` per line, ending with `end`. Every engine needs `writeNow()` and the quantized tune block; keep both when editing `readState()`.
 
 ## Adding a New Genre
 
-1. Copy the closest existing engine as a starting point
+1. Copy the closest existing engine as a starting point (it brings the state reader, the phrase-quantized tune change and `writeNow()`), and add the genre to `BEATPILOT_GENRES` in `lib/paths.sh`, `GENRES` in `hooks/music.ts` and the `genre` options in `.claude-plugin/plugin.json`
 2. Set BPM and swing amount appropriate to genre
 3. Define drum patterns (4 energy levels × 16 steps) + ghost patterns
 4. Define chord progressions (at least 4, mix of moods)
@@ -295,10 +300,9 @@ beatpilot-watch() { /path/to/beatpilot/adapters/filewatcher.sh "${1:-.}"; }
 ### Direct state control (for custom integrations)
 
 ```bash
-# Write state directly: write-state.sh <energy 0-3> [content for variation]
-/path/to/beatpilot/adapters/write-state.sh 2 "editing main.py"
-/path/to/beatpilot/adapters/write-state.sh 3 "running tests"
-/path/to/beatpilot/adapters/write-state.sh 0 "build failed"
+# write-state.sh <energy 0-3> [content | - | --keep]
+/path/to/beatpilot/adapters/write-state.sh 2 "add a login page"   # new task: new tune
+/path/to/beatpilot/adapters/write-state.sh 3 --keep               # energy only, same tune
 ```
 
 This is the building block for writing your own adapter for any tool.
@@ -311,12 +315,13 @@ adapters/
   claude-code.sh    — Claude Code adapter (receives hook JSON on stdin)
   copilot-cli.sh    — GitHub Copilot CLI adapter (receives hook JSON on stdin)
   filewatcher.sh    — universal adapter (watches filesystem for changes)
-hook.sh             — thin wrapper → adapters/claude-code.sh (backwards compat)
+hook.sh             — thin wrapper → adapters/claude-code.sh (./install.sh route)
+hooks/register.tsx  — the Claude Code plugin's in-process mod (events, engine, player)
 ```
 
 All adapters call `write-state.sh`, which handles:
 - MD5 hashing of content into musical parameters (key, scale, seed)
-- Atomic state file writes to `/tmp/beatpilot-state`
+- Atomic state file writes to `<run dir>/state` (a private per-user directory, see `lib/paths.sh`)
 - Auto-starting the ChucK engine if not running
 
 ## File Structure

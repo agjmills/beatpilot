@@ -19,7 +19,7 @@ brew install chuck
 # Linux
 sudo apt install chuck
 
-# Windows — download from https://chuck.cs.princeton.edu/release/
+# Windows: use WSL (the scripts need bash)
 ```
 
 ### 2. Install Beatpilot
@@ -55,6 +55,12 @@ Downloads CC0 drum samples from [Virtuosity Drums](https://github.com/sfzinstrum
 
 That's it. Music starts when you start coding and fades out when you stop.
 
+In Claude Code, run `/beatpilot` to open the player beside the chat: what's playing, the 16-bar phrase as it moves, the chords, which layers are in, and controls for genre, volume, pause and a new tune. The status line shows it too:
+
+```
+♪ lofi · E♭ dorian · ▮▮▯ · bar 9/16
+```
+
 ## Genres
 
 Switch with `/beatpilot:vibe <genre>` in Claude Code, or `./vibe.sh <genre>` from the terminal.
@@ -74,9 +80,21 @@ Switch with `/beatpilot:vibe <genre>` in Claude Code, or `./vibe.sh <genre>` fro
 
 Beatpilot doesn't care what writes the code — it just needs to know something is happening. There are three ways to connect it:
 
-### Claude Code (hooks — built in)
+### Claude Code (plugin — built in)
 
-The plugin install wires this up automatically. Hooks fire on every prompt, tool call, agent spawn, and error.
+The plugin runs inside Claude Code as a mod (needs a recent Claude Code with plugin function hooks). It hears every prompt, tool call, agent and turn in-process, owns the ChucK engine for the session (it stops when the session ends), and draws the player, status line and optional phrase meter.
+
+Settings live in `/config` under Beatpilot:
+
+| Setting | Default | What it does |
+|---|---|---|
+| Genre | techno | Which engine plays (also switchable from the player or `/beatpilot <genre>`) |
+| Now playing in the status line | on | Genre, key, energy and bar |
+| Phrase meter above the prompt | off | A one-line view of the 16-bar phrase |
+| New tune per prompt | on | Each prompt gets its own key and melody. Off: one tune per project |
+| Play in headless sessions | off | Also play during `claude -p` / SDK runs |
+
+`./install.sh` is the older route: shell hooks in `~/.claude/settings.json`, for setups without the plugin. Use one or the other, not both.
 
 ### GitHub Copilot CLI (hooks)
 
@@ -114,11 +132,13 @@ beatpilot-watch() { /path/to/beatpilot/adapters/filewatcher.sh "${1:-.}"; }
 ### Direct state control (for custom integrations)
 
 ```bash
-# write-state.sh <energy 0-3> [content for musical variation]
-./adapters/write-state.sh 2 "editing main.py"
-./adapters/write-state.sh 3 "running tests"
-./adapters/write-state.sh 0 "build failed"
+# write-state.sh <energy 0-3> [content | - | --keep]
+./adapters/write-state.sh 2 "add a login page"   # new task: new tune
+./adapters/write-state.sh 3 --keep               # busier, same tune
+echo "$PROMPT" | ./adapters/write-state.sh 2 -   # content on stdin
 ```
+
+State lives in a private per-user directory (`$XDG_RUNTIME_DIR/beatpilot`, or `$TMPDIR/beatpilot-<uid>`); `lib/paths.sh --print` shows where.
 
 ## How it sounds
 
@@ -143,28 +163,35 @@ Your activity controls an **energy** level (0–3) that determines how many laye
 
 | Energy | What plays | Triggered by |
 |--------|-----------|-------------|
-| **0** | Silence (fadeout) | Inactivity, errors |
-| **1** | Kick + basic rhythm | Decay from higher levels |
-| **2** | + bass, pads/keys, full groove | Prompts, file edits, tool calls |
-| **3** | + lead melody, full arrangement | Agent spawns, complex operations |
+| **0** | Silence (fadeout) | Inactivity |
+| **1** | Kick + basic rhythm | End of a turn, decay from higher levels |
+| **2** | + bass, pads/keys, full groove | Prompts, tool calls |
+| **3** | + lead melody, full arrangement | A busy stretch (10+ tool calls in 30 s), agents running |
+
+A failed tool call is a moment of **tension** (one level down), not a breakdown: agents fail commands all the time and the groove shouldn't collapse every time a grep finds nothing.
 
 Energy decays naturally over time. If your AI tool goes idle, the music strips back layer by layer and eventually fades to silence. When activity resumes, it builds back up — sometimes with a dramatic filtered intro.
 
 ## Content hashing
 
-The text content of each event is MD5-hashed to produce musical parameters:
+Each prompt's text is hashed into musical parameters:
 
 - **Key** (0–11) — root note
 - **Scale** (index) — genre-specific (pentatonic, minor, jazzy 7ths, harmonic minor, etc.)
 - **Seed** (0–255) — selects chord progression, motif shape, arrangement template
 
-Same prompt = same musical fingerprint. Different prompts sound different. Your codebase has a soundtrack.
+Same prompt = same musical fingerprint. Before the first prompt (and for the file watcher) the tune comes from the project's path, so your codebase has a soundtrack. Tool calls only move the energy; they never re-roll the tune, so a piece gets to develop while Claude works. A new tune always comes in **at the next 16-bar phrase boundary**, never mid-phrase (straight away if the music was silent).
 
 ## Controls
 
 ### In Claude Code
 
 ```
+/beatpilot                    Open the player
+/beatpilot off | on           Pause / resume
+/beatpilot dnb                Switch genre
+/beatpilot vol 50             Set volume (0-100)
+/beatpilot new                New tune from the next phrase
 /beatpilot:music              Toggle on/off
 /beatpilot:vibe dnb           Switch genre
 /beatpilot:volume 50          Set volume (0-100)
@@ -225,7 +252,9 @@ beatpilot/
 │   ├── piano.ck             # 60 BPM — neoclassical solo piano, Salamander samples
 │   └── ambient.ck           # 70 BPM — drones, shimmer, no drums
 ├── skills/                  # Claude Code slash commands
-├── hook.sh                  # Claude Code hook entry point
+├── hooks/                   # Claude Code mod: events, engine, player, status line
+├── lib/paths.sh             # Per-user runtime directory shared by everything
+├── hook.sh                  # Shell hook entry point (./install.sh route)
 ├── start.sh / stop.sh / toggle.sh / vibe.sh / volume.sh
 └── install.sh / uninstall.sh
 ```
@@ -256,7 +285,8 @@ Every engine is built in [ChucK](https://chuck.cs.princeton.edu/) — synthesis-
 ## Prerequisites
 
 - **[ChucK](https://chuck.cs.princeton.edu/release/)** — `brew install chuck` / `apt install chuck`
-- **jq** — `brew install jq` / `apt install jq` (for JSON parsing in hooks)
+- **jq** — `brew install jq` / `apt install jq` (for the shell hooks: Copilot CLI and `./install.sh`)
+- Developed against ChucK 1.5.2
 - **md5sum** or **md5** (included on macOS/Linux)
 - Optional: **fswatch** for efficient file watching (`brew install fswatch`)
 

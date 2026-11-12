@@ -1,71 +1,72 @@
 #!/bin/bash
-# Start the Beatpilot engine
+# Start the Beatpilot engine.
+#   start.sh               start in the background (shell adapters)
+#   start.sh --foreground  replace this process with the engine (the Claude
+#                          Code mod owns it this way, so it dies with the session)
 SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
-PID_FILE="/tmp/beatpilot.pid"
-LOCK_DIR="/tmp/beatpilot.lock"
-GENRE_FILE="/tmp/beatpilot-genre"
+# shellcheck source=lib/paths.sh
+. "$SCRIPT_DIR/lib/paths.sh" || exit 1
 
-# Pattern that matches any Beatpilot chuck process on this machine,
-# regardless of which clone or install it came from. Other ChucK projects
-# (non-Beatpilot) won't match because the path segment "/genres/" combined
-# with the .ck extension is Beatpilot-specific.
-ENGINE_PATTERN="chuck .*/genres/(techno|dnb|lofi|reggae|dub|goa|piano|ambient)\\.ck"
+foreground=0
+[ "${1:-}" = "--foreground" ] && foreground=1
 
-# Acquire lock — mkdir is atomic on POSIX, so two concurrent start.sh
-# invocations can't both pass this check. Trap clears the lock on exit.
-acquired=0
-for _ in 1 2 3 4 5; do
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-        acquired=1
-        break
+if ! command -v chuck &>/dev/null; then
+    echo "Beatpilot: ChucK not installed. brew install chuck (macOS) or sudo apt install chuck (Linux)" >&2
+    exit 1
+fi
+
+# --- Lock: mkdir is atomic. The lock holds its owner's PID so a lock left by
+# a killed start (SIGKILL skips traps) is broken instead of blocking forever.
+take_lock() {
+    if mkdir "$BP_LOCK" 2>/dev/null; then
+        echo $$ > "$BP_LOCK/pid"
+        return 0
     fi
+    local owner
+    owner=$(cat "$BP_LOCK/pid" 2>/dev/null)
+    if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+        rm -rf "$BP_LOCK"
+        mkdir "$BP_LOCK" 2>/dev/null && echo $$ > "$BP_LOCK/pid" && return 0
+    fi
+    return 1
+}
+acquired=0
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    take_lock && { acquired=1; break; }
     sleep 0.2
 done
 if [ "$acquired" -ne 1 ]; then
-    echo "Beatpilot: another start in progress (could not acquire $LOCK_DIR)"
+    echo "Beatpilot: another start in progress"
     exit 1
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+trap 'rm -rf "$BP_LOCK"' EXIT
 
-# If a recorded PID is still alive AND it's actually one of ours, do nothing.
-if [ -f "$PID_FILE" ]; then
-    pid=$(cat "$PID_FILE")
-    if kill -0 "$pid" 2>/dev/null && pgrep -f "$ENGINE_PATTERN" | grep -qx "$pid"; then
+# Already running and really ours? Nothing to do.
+if [ -f "$BP_PID" ]; then
+    pid=$(cat "$BP_PID")
+    if kill -0 "$pid" 2>/dev/null && pgrep -f "$BP_ENGINE_PATTERN" | grep -qx "$pid"; then
         echo "Beatpilot already running (PID $pid)"
         exit 0
     fi
 fi
 
-# Clean up stale state: kill leftover Beatpilot chuck instances anywhere
-# on the machine. Non-Beatpilot ChucK processes are left alone.
-pkill -f "$ENGINE_PATTERN" 2>/dev/null
-rm -f /tmp/beatpilot-state "$PID_FILE"
+# Stale engines of this user from any clone or install: clear them out.
+pkill -f "$BP_ENGINE_PATTERN" 2>/dev/null
+rm -f "$BP_STATE" "$BP_PID" "$BP_NOW"
 sleep 0.1
 
-# Read genre (default: techno)
-genre="techno"
-if [ -f "$GENRE_FILE" ]; then
-    genre=$(cat "$GENRE_FILE")
-fi
-
-# Find the engine file
+genre=$(bp_genre)   # validated against the known list: never a path
 engine="${SCRIPT_DIR}/genres/${genre}.ck"
-if [ ! -f "$engine" ]; then
-    echo "Unknown genre: ${genre} (falling back to techno)"
-    engine="${SCRIPT_DIR}/genres/techno.ck"
+
+# The engine gets the runtime directory as its argument (genre.ck:<dir>).
+if [ "$foreground" -eq 1 ]; then
+    echo $$ > "$BP_PID"
+    rm -rf "$BP_LOCK"
+    trap - EXIT
+    exec chuck "${engine}:${BEATPILOT_RUN}"
 fi
 
-chuck "$engine" &
+chuck "${engine}:${BEATPILOT_RUN}" >/dev/null 2>&1 &
 new_pid=$!
-echo "$new_pid" > "$PID_FILE"
+echo "$new_pid" > "$BP_PID"
 echo "Beatpilot started [${genre}] (PID $new_pid)"
-
-# Sanity check: after a brief settle, exactly one of our chucks should be running.
-sleep 0.2
-running=$(pgrep -f "$ENGINE_PATTERN" | wc -l | tr -d ' ')
-if [ "$running" -gt 1 ]; then
-    echo "Warning: $running Beatpilot engines detected — cleaning up extras"
-    for pid in $(pgrep -f "$ENGINE_PATTERN"); do
-        [ "$pid" != "$new_pid" ] && kill "$pid" 2>/dev/null
-    done
-fi

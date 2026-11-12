@@ -8,16 +8,16 @@ HOOK_CMD="${SCRIPT_DIR}/hook.sh"
 
 # Stop the engine if running
 "${SCRIPT_DIR}/stop.sh" 2>/dev/null || true
-rm -f /tmp/beatpilot-disabled /tmp/beatpilot-state
+. "$SCRIPT_DIR/lib/paths.sh" && rm -rf "$BEATPILOT_RUN"
 
 if [ -f "$SETTINGS" ]; then
     # Remove hooks that point to our hook.sh
     jq --arg cmd "$HOOK_CMD" '
       .hooks |= (if . then
         with_entries(
-          .value |= map(select(
-            .hooks | all(.command != $cmd)
-          )) | select(length > 0)
+          .value |= map(.hooks |= map(select(.command != $cmd))
+                        | select((.hooks | length) > 0))
+          | select((.value | length) > 0)
         ) | if . == {} then empty else . end
       else . end)
     ' "$SETTINGS" > "${SETTINGS}.tmp"
