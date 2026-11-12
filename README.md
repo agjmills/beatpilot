@@ -267,7 +267,7 @@ cp genres/techno.ck genres/house.ck
 ./vibe.sh house
 ```
 
-See `CLAUDE.md` for the full sound design guidelines — 19 principles covering everything from cell-based composition to reverb tuning. It's a complete handbook for building a genre engine that sounds like music, not a tech demo.
+See `CLAUDE.md` for the full sound design guidelines — 22 principles covering everything from cell-based composition and voice-leading to reverb tuning and how to measure the result. It's a complete handbook for building a genre engine that sounds like music, not a tech demo.
 
 ## How the audio works
 
