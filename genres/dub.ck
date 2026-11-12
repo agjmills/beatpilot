@@ -54,9 +54,8 @@ me.dir() + "/../samples/dub/" => string smpDir;
 
 // ============ PHRASE / SONG STRUCTURE ============
 // Chord progression: 4 chords, each lasts 4 bars = 16-bar phrase
-// Dub: simple minor progressions. i-iv, i-v-iv, i-bVII-iv, i-iv-bVII-v
-// Dub progressions: dark, minor, unresolved tension
-// i-iv, i-bVII-iv, i-bVI-iv-bVII — classic dub minor movement
+// Progression degrees index the 7-note harmony scale (hScales) — see realChord()
+// i-iv vamp, i-bVII-iv-i, i-bVI-iv-bVII, i-iv-bVI-v
 [[0, 3, 0, 3], [0, 6, 3, 0], [0, 5, 3, 6], [0, 3, 5, 4]] @=> int progs[][];
 0 => int progIdx;
 0 => int chordIdx;
@@ -65,122 +64,198 @@ me.dir() + "/../samples/dub/" => string smpDir;
 0 => int phraseRepeat;
 int chordSub[4];
 
-// Lead motif: 4-bar phrase (64 steps) — very sparse for dub, let delay fill space
+// ============ SCALES ============
+// Melody/bass scales: minor pentatonic, phrygian, harmonic minor, natural minor
+[[0,3,5,7,10], [0,1,3,5,7,8,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int scales[][];
+// Harmony scales (7-note parent each chord is stacked in) — pentatonic borrows aeolian
+[[0,2,3,5,7,8,10], [0,1,3,5,7,8,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int hScales[][];
+
+// Floor division / modulo that behave for negative degrees (below the root)
+fun int fDiv(int a, int b) { if(a >= 0) return a / b; return -((-a + b - 1) / b); }
+fun int fMod(int a, int b) { return a - fDiv(a, b) * b; }
+
+// Map a progression degree onto a real triad for the current scale:
+// no diminished/augmented chords, and pentatonic roots must be pentatonic notes
+fun int realChord(int d) {
+    fMod(d, 7) => d;
+    if(scaleType == 0) { if(d == 5) return 2; if(d == 1) return 4; }   // bVI -> bIII, ii° -> v
+    if(scaleType == 1) { if(d == 4) return 1; if(d == 2) return 5; }   // v° -> bII (phrygian dread)
+    if(scaleType == 2) { if(d == 6) return 4; if(d == 2) return 5; if(d == 1) return 4; } // vii°/III+/ii° -> V/VI
+    if(scaleType == 3) { if(d == 1) return 4; }
+    return d;
+}
+// Semitone (above key) of harmony-scale degree d
+fun int hSemi(int d) { hScales[scaleType] @=> int h[]; return h[fMod(d, 7)] + 12 * fDiv(d, 7); }
+// Semitone of melody-scale degree d (any sign)
+fun int mSemi(int d) { scales[scaleType] @=> int scl[]; return scl[fMod(d, scl.cap())] + 12 * fDiv(d, scl.cap()); }
+// Melody-scale index of the current chord root, folded so chords above a tritone sit below the tonic
+fun int rootIdx() {
+    hSemi(chordRoot) => int rs;
+    scales[scaleType] @=> int scl[];
+    for(0 => int i; i < scl.cap(); i++) {
+        if(scl[i] == rs) { if(rs > 6) return i - scl.cap(); return i; }
+    }
+    return 0;
+}
+// Is this MIDI note a tone of the current chord?
+fun int isChordTone(int m) {
+    for(0 => int i; i < 3; i++) if(fMod(m - key - hSemi(chordRoot + i * 2), 12) == 0) return 1;
+    return 0;
+}
+// A sustained note a semitone or tritone from a chord tone clashes: move it to the nearest chord tone
+fun int snapToChord(int m, int avoid) {
+    if(isChordTone(m)) return m;
+    0 => int clash;
+    for(0 => int i; i < 3; i++) {
+        fMod(m - key - hSemi(chordRoot + i * 2), 12) => int iv;
+        if(iv == 1 || iv == 11 || iv == 6) 1 => clash;
+    }
+    if(!clash) return m;
+    // nearest chord tone, but not the note we just played (that would flatten the line)
+    for(1 => int d; d < 6; d++) {
+        if(isChordTone(m - d) && m - d != avoid) return m - d;
+        if(isChordTone(m + d) && m + d != avoid) return m + d;
+    }
+    return m;
+}
+// Fold a MIDI note into [lo, lo+span)
+fun int fold(int m, int lo, int span) {
+    while(m < lo) m + 12 => m;
+    while(m >= lo + span) m - 12 => m;
+    return m;
+}
+
+// Lead motif: 4-bar phrase (64 steps) — sparse melodica, delay fills the space
+-99 => int REST; // rest sentinel (negative degrees are real notes below the root)
 64 => int PHRASE_LEN;
 int motif[64];
 int bassLine[64];
-int delayThrow[64]; // 1 = send this note to the delay throw bus
+int bassLen[64];    // bass note length in steps (dub bass is rhythm: notes AND gaps)
+int delayThrow[64]; // 1 = throw this note into the dub delay
 0 => int motifGenerated;
 0 => int phraseStep;
 
-// Arrangement mask: which bars have which layers active
-// 0=minimal, 1=bass only, 2=bass+pad/skank, 3=bass+pad+lead
+// Arrangement mask: 0=minimal, 1=bass+drums, 2=+pad/skank, 3=+melodica
 int arrangement[16];
+// Mixing-desk mutes (energy >= 2): 0=none, 1=drums out (bass + echoes), 2=bass out (drums + echoes)
+int dubMute[16];
+[[0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,0,2],
+ [0,0,0,2, 0,0,0,0, 0,0,0,2, 0,0,1,0],
+ [0,0,0,0, 0,0,0,2, 0,0,1,1, 0,0,0,2],
+ [0,0,0,0, 0,0,0,1, 0,0,0,0, 0,0,1,2]] @=> int muteTpl[][];
+
+fun void setMutes() {
+    (seed + phraseRepeat) % muteTpl.cap() => int mt;
+    for(0 => int i; i < 16; i++) muteTpl[mt][i] => dubMute[i];
+}
+
+fun void setBass(int pos, int deg, int len) { deg => bassLine[pos]; len => bassLen[pos]; }
 
 fun void generateMotif() {
     seed => int s;
     for(0 => int i; i < PHRASE_LEN; i++) {
-        -1 => motif[i];
-        -1 => bassLine[i];
+        REST => motif[i];
+        REST => bassLine[i];
+        0 => bassLen[i];
         0 => delayThrow[i];
     }
+    scales[scaleType].cap() => int sLen;
 
-    // --- CELL-BASED COMPOSITION ---
-    // Dub: very sparse — 2 notes per bar max, delay does the rest
+    // --- CELL ---
     int cellDeg[3];
     int cellPos[3];
-
     0 => cellDeg[0];
     [1, 2, -1, 2, 1, -2] @=> int leaps[];
     leaps[s % leaps.cap()] => int leap1;
     leap1 => cellDeg[1];
     [-1, 0, 1, -1, 0] @=> int resolves[];
     cellDeg[1] + resolves[(s / 2) % resolves.cap()] => cellDeg[2];
+    // Third note must move: no repeated note, no dead "there and back"
+    if(cellDeg[2] == cellDeg[1]) { if(leap1 > 0) cellDeg[1] + 1 => cellDeg[2]; else cellDeg[1] - 1 => cellDeg[2]; }
+    if(cellDeg[2] == cellDeg[0]) { if(leap1 > 0) cellDeg[1] + 1 => cellDeg[2]; else cellDeg[1] - 1 => cellDeg[2]; }
 
-    // Dub cell rhythm: wide spacing, spacious — let delay echo fill gaps
-    [[0, 6, 12], [0, 8, 14], [0, 6, 10], [2, 8, 14], [0, 10, 14]] @=> int cellRhythms[][];
+    // Dub cell rhythm: spacious (0,6,12) family — the delay echoes fill the gaps
+    [[0, 6, 12], [0, 6, 10], [2, 8, 14], [0, 8, 14], [0, 4, 10]] @=> int cellRhythms[][];
     cellRhythms[(s / 3) % cellRhythms.cap()] @=> int cR[];
     cR[0] => cellPos[0]; cR[1] => cellPos[1]; cR[2] => cellPos[2];
 
     s % 3 => int varType;
 
-    // Bar 1: cell — only 2 notes (skip last for maximum space)
-    cellDeg[0] => motif[cellPos[0]];
-    cellDeg[1] => motif[cellPos[1]];
-    // Throw the second note into delay
-    1 => delayThrow[cellPos[1]];
+    // Bar 1: state the cell; throw the last note
+    for(0 => int i; i < 3; i++) cellDeg[i] => motif[cellPos[i]];
+    1 => delayThrow[cellPos[2]];
 
-    // Bar 2: cell varied — still sparse
-    if(varType == 0) {
-        cellDeg[0] + 2 => motif[16 + cellPos[0]];
-        cellDeg[1] + 2 => motif[16 + cellPos[1]];
-        1 => delayThrow[16 + cellPos[0]]; // throw first note this time
-    } else if(varType == 1) {
-        cellDeg[0] => motif[16 + cellPos[0]];
-        cellDeg[0] - leap1 => motif[16 + cellPos[2]];
-        1 => delayThrow[16 + cellPos[2]];
-    } else {
-        cellDeg[2] + 1 => motif[16 + cellPos[0]];
-        cellDeg[1] => motif[16 + cellPos[1]];
-        1 => delayThrow[16 + cellPos[1]];
+    // Bar 2: varied cell (transpose a 3rd / invert / retrograde)
+    int v[3];
+    if(varType == 0) { for(0 => int i; i < 3; i++) cellDeg[i] + 2 => v[i]; }
+    else if(varType == 1) { for(0 => int i; i < 3; i++) cellDeg[0] - (cellDeg[i] - cellDeg[0]) => v[i]; }
+    else { for(0 => int i; i < 3; i++) cellDeg[2 - i] => v[i]; }
+    for(0 => int i; i < 3; i++) v[i] => motif[16 + cellPos[i]];
+    1 => delayThrow[16 + cellPos[1]];
+
+    // Bar 3: the cell twice — higher, then original with an approach note from below
+    for(0 => int i; i < 3; i++) cellDeg[i] + 2 => motif[32 + cellPos[i] / 2];
+    cellDeg[0] - 1 => motif[32 + 7];
+    for(0 => int i; i < 3; i++) cellDeg[i] => motif[40 + cellPos[i] / 2];
+    1 => delayThrow[40 + cellPos[2] / 2];
+
+    // Bar 4: half the cell, then resolve to the root and let the echo carry it
+    cellDeg[0] => motif[48 + cellPos[0]];
+    cellDeg[1] => motif[48 + cellPos[0] + 3];
+    0 => motif[56];
+    1 => delayThrow[56];
+
+    // --- BASS: the riddim. Cell-derived, repeats every 4 bars like a real dub bassline ---
+    // Roles: 0=root, 1=cell[1], 2=cell[2], 3=fifth, 4=octave
+    4 => int fifth; if(sLen == 5) 3 => fifth;
+    [[0,4, 6,2, 8,3, 12,2, 14,2],
+     [2,3, 6,1, 8,4, 12,2, 14,2],
+     [0,6, 7,1, 8,4, 12,2, 14,1],
+     [0,2, 3,2, 6,2, 8,4, 14,2]] @=> int bRhy[][];   // pairs: step, length
+    [[0, 1, 0, 3, 2],
+     [0, 1, 0, 3, 2],
+     [0, 1, 3, 0, 4],
+     [0, 1, 2, 0, 3]] @=> int bRole[][];   // beats 1 and 3 always root or fifth
+    (s / 5) % bRhy.cap() => int bt;
+    int roleDeg[5];
+    0 => roleDeg[0]; cellDeg[1] => roleDeg[1]; cellDeg[2] => roleDeg[2];
+    fifth => roleDeg[3]; sLen => roleDeg[4];
+    for(0 => int n; n < 5; n++) {
+        bRhy[bt][n * 2] => int pos; bRhy[bt][n * 2 + 1] => int len;
+        roleDeg[bRole[bt][n]] => int d;
+        // Bar 1: as written
+        setBass(pos, d, len);
+        // Bar 2: same rhythm, follows the lead's variation
+        d => int d2;
+        if(bRole[bt][n] == 1 || bRole[bt][n] == 2) {
+            if(varType == 0) d + 2 => d2;
+            else if(varType == 1) 0 - d => d2;
+            else roleDeg[3 - bRole[bt][n]] => d2; // retrograde: swap cell[1] and cell[2]
+        }
+        setBass(16 + pos, d2, len);
+        // Bar 3: busier — passing cell tone in the gap after each note
+        setBass(32 + pos, d, len);
+        if(len >= 3 && pos + 2 < 16) { setBass(32 + pos, d, 2); setBass(32 + pos + 2, cellDeg[1], 1); }
+        // Bar 4: just roots and fifths, resolving
+        if(bRole[bt][n] == 3) setBass(48 + pos, fifth, len); else setBass(48 + pos, 0, len);
     }
 
-    // Bar 3: development — 3 notes, the busiest it gets
-    cellDeg[0] + 3 => motif[32 + cellPos[0]];
-    1 => delayThrow[32 + cellPos[0]];
-    cellDeg[0] - 1 => motif[32 + 8]; // approach note
-    cellDeg[1] => motif[32 + cellPos[2]];
-    1 => delayThrow[32 + cellPos[2]];
-
-    // Bar 4: half cell + resolve — very sparse
-    cellDeg[0] + 1 => motif[48];
-    0 => motif[56]; // resolve to root
-    1 => delayThrow[48]; // throw, let echo carry into next phrase
-
-    // --- BASS LINE: cell-derived, heavy sub ---
-    // Dub bass: long sustained notes on strong beats, very simple
-    // Bar 1: root on beat 1, hold; cell interval on beat 3
-    0 => bassLine[0];
-    cellDeg[1] => bassLine[8];
-
-    // Bar 2: follows variation
-    if(varType == 0) {
-        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[24];
-    } else if(varType == 1) {
-        0 => bassLine[16]; 0 - leap1 => bassLine[24];
-    } else {
-        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[24];
-    }
-
-    // Bar 3: slightly busier
-    0 => bassLine[32]; cellDeg[1] => bassLine[36];
-    3 => bassLine[40]; 0 => bassLine[44];
-
-    // Bar 4: simple roots
-    0 => bassLine[48];
-    0 => bassLine[56];
-
-    // --- ARRANGEMENT: dub-specific templates ---
-    // Dub loves stripping down to just bass + delay echoes
+    // --- ARRANGEMENT: dub "version" — melodica comes and goes in whole phrases ---
     s % 4 => int arrType;
     if(arrType == 0) {
-        // Build: bass → +pad/skank → +lead → strip to bass + echoes
-        // Dub: mostly bass, layers appear briefly then vanish into delay
-        [1,1,1,0, 1,1,2,1, 1,1,1,1, 2,1,3,1] @=> int arrA[];
+        [1,1,2,2, 2,2,2,2, 3,3,3,3, 2,2,1,1] @=> int arrA[];   // build
         for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
     } else if(arrType == 1) {
-        // Call-response: lead thrown into delay, then just echoes
-        [1,1,1,1, 2,1,1,1, 1,1,2,1, 3,1,1,0] @=> int arrB[];
+        [2,2,3,3, 1,1,2,2, 2,2,3,3, 1,1,2,1] @=> int arrB[];   // call-response
         for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
     } else if(arrType == 2) {
-        // Full then strip: classic dub breakdown
-        [0,1,1,1, 1,2,1,1, 1,1,1,2, 1,3,1,0] @=> int arrC[];
+        [3,3,3,3, 2,2,2,2, 1,1,1,1, 2,2,3,3] @=> int arrC[];   // full then strip
         for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
     } else {
-        // Spacious: mostly sparse, occasional full bars
-        [1,1,2,2, 1,1,3,3, 2,2,1,1, 3,3,2,1] @=> int arrD[];
+        [1,1,2,2, 2,2,3,3, 1,1,1,1, 3,3,2,2] @=> int arrD[];   // spacious
         for(0 => int i; i < 16; i++) arrD[i] => arrangement[i];
     }
+    setMutes();
 
     0 => phraseStep;
     1 => motifGenerated;
@@ -258,28 +333,21 @@ if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
 // ============ DUB DELAY THROW BUS ============
 // THE signature dub sound — long feedback delay with filtering
 // Certain notes and snare hits get "thrown" into this delay
+// Wet is tapped before the feedback gain so echo level and tail length are independent.
 Gain delaySend => DelayL dubDly => LPF dlyLP => HPF dlyHP => Gain dlyFb => delaySend;
-dlyFb => Gain dlyWet => master;
+dlyHP => Gain dlyWet => master;
 
-// Dotted quarter = stepDur * 6 at 75 BPM
-(stepDur * 6) => dubDly.max => dubDly.delay;
-0.62 => dlyFb.gain;     // very high feedback — long echoing tails, the FX IS the instrument
-1000.0 => dlyLP.freq;   // echoes get very dark with each repeat
-250.0 => dlyHP.freq;    // echoes get thinner — removes mud
-0.09 => dlyWet.gain;    // louder wet — delay is prominent in the mix
-0.0 => float dlyWetTarget;
-0.06 => dlyWetTarget;
+// Dotted eighth (3 sixteenths = 0.64s at 70 BPM) — the classic tape-echo throw
+(stepDur * 6) => dubDly.max;
+(stepDur * 3) => dubDly.delay;
+0.50 => float DLY_FB_BASE;   // repeats die over ~3s; swells push to 0.70 max (loop stays < 1)
+0.38 => float DLY_WET_BASE;  // first echo of a full throw sits ~9 dB under the dry note
+DLY_FB_BASE => dlyFb.gain;
+1400.0 => dlyLP.freq;   // echoes get darker with each repeat
+300.0 => dlyHP.freq;    // and thinner — no mud building under the sub
+0.0 => dlyWet.gain;
+DLY_WET_BASE => float dlyWetTarget;
 
-// ============ SCALES ============
-// Dub: dark only — minor pentatonic, phrygian, harmonic minor, natural minor
-[[0,3,5,7,10], [0,1,3,5,7,8,10], [0,2,3,5,7,8,11], [0,2,3,5,7,8,10]] @=> int scales[][];
-// 0: minor pentatonic, 1: minor pent alt voicing, 2: dorian, 3: natural minor
-
-fun int note(int degree, int octave) {
-    scales[scaleType] @=> int scl[];
-    if(degree < 0) return 0;
-    return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
-}
 
 // ============ KICK ============
 // Dub kick: very deep, round, long sustain — ONE DROP on beat 3
@@ -295,15 +363,15 @@ Noise kickClick => BPF kickClickBP => ADSR kickClickEnv => kickG;
 kickClickEnv.set(0.3::ms, 12::ms, 0.0, 5::ms);
 0.2 => kickClick.gain;
 
-// One-drop patterns: kick on beat 3 (step 8), NOT beat 1!
+// One-drop (kick on beat 3, step 8) at energy 1-2; steppers (every beat) at energy 3
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0]] @=> int kPat[][];
+ [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0]] @=> int kPat[][];
 
 // ============ VELOCITY MAPS ============
 // Kick: beat 3 is the one-drop — HARD. Everything else ghost-level.
-[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.85, 0.0, 0.0, 0.0] @=> float kickVel[];
+[0.75, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.6, 0.0, 0.0, 0.0] @=> float kickVel[];
 // Hat: off-beat accents, ghost on downbeats — dub hats are felt not heard
 [0.3, 0.2, 0.8, 0.3, 0.3, 0.2, 0.9, 0.3, 0.3, 0.2, 0.8, 0.3, 0.3, 0.2, 0.9, 0.4] @=> float hatVel[];
 // Snare: one-drop accent on beat 3
@@ -344,6 +412,16 @@ snrEnv.set(0.3::ms, 45::ms, 0.0, 15::ms);
 // Snare also feeds the delay throw bus
 snrG => Gain snrToDelay => delaySend;
 0.0 => snrToDelay.gain;
+// Spring tank: two short resonant combs + band-pass = the metallic "boing" on every rim
+snrG => Gain springIn;
+springIn => DelayL sp1 => Gain sp1Fb => sp1;
+springIn => DelayL sp2 => Gain sp2Fb => sp2;
+0.05::second => sp1.max; 0.0313::second => sp1.delay; 0.80 => sp1Fb.gain;
+0.05::second => sp2.max; 0.0467::second => sp2.delay; 0.76 => sp2Fb.gain;
+sp1 => BPF springBP => Gain springOut => master;
+sp2 => springBP;
+1700.0 => springBP.freq; 0.8 => springBP.Q;
+0.6 => springIn.gain; 0.55 => springOut.gain;
 
 // Snare on beat 3 — layered with kick for the one-drop
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -354,12 +432,17 @@ snrG => Gain snrToDelay => delaySend;
 // ============ SUB BASS ============
 // Dub sub bass: THE foundation. Deep sine, heaviest bass in any genre.
 // Detuned pair for width + slow drift LFO
-SinOsc bassOsc1 => LPF bassF => Gain bassG => master;
+// Sine pair = the weight; TriOsc layer = odd harmonics so the line is audible on small speakers.
+// ADSR gates every note: dub bass is as much about the gaps as the notes.
+SinOsc bassOsc1 => LPF bassF => ADSR bassEnv => Gain bassG => master;
 SinOsc bassOsc2 => bassF;
-0.7 => bassOsc1.gain; 0.65 => bassOsc2.gain;
-120.0 => bassF.freq; 3.0 => bassF.Q;
-0.18 => bassG.gain;
-120.0 => float bassFiltTarget;
+TriOsc bassTri => bassF;
+0.6 => bassOsc1.gain; 0.55 => bassOsc2.gain; 0.22 => bassTri.gain;
+350.0 => bassF.freq; 1.2 => bassF.Q;
+bassEnv.set(6::ms, 120::ms, 0.85, 70::ms);
+0.30 => bassG.gain;
+350.0 => float bassFiltTarget;
+0 => int bassRemain; // steps left on the current bass note
 0.0 => float bassDriftPhase;
 // Bass also feeds reverb lightly
 // bass routes through master to reverb
@@ -396,10 +479,10 @@ TriOsc padOsc1 => LPF padF => Gain padG => master;
 SinOsc padOsc2 => padF;
 TriOsc padOsc3 => padF;
 0.25 => padOsc1.gain; 0.3 => padOsc2.gain; 0.2 => padOsc3.gain;
-250.0 => padF.freq; 1.8 => padF.Q; // darker, more resonant
+600.0 => padF.freq; 1.2 => padF.Q; // dark but above the sub
 0.0 => padG.gain;
 0.0 => float padGainTarget;
-250.0 => float padFiltTarget;
+600.0 => float padFiltTarget;
 0 => int padLastDeg;
 0.0 => float padLfoPhase;
 
@@ -411,7 +494,12 @@ TriOsc padOsc3 => padF;
 // Short, choppy chord hits on off-beats — the "chick-a chick-a" rhythm
 // Filtered noise + TriOsc for percussive, muted guitar approximation
 // Skank: sample-based if available, Mandolin fallback
+// Synth fallback is a 3-voice chord (root/3rd/5th) — a skank is a chord chop, not a single note
 Mandolin skankSynth => ADSR skankChop => LPF skankFilt => Gain skankG => master;
+Mandolin skankSynth2 => skankChop;
+Mandolin skankSynth3 => skankChop;
+skankG => Gain skankToDelay => delaySend;
+0.0 => skankToDelay.gain;
 skankChop.set(0.5::ms, 60::ms, 0.0, 15::ms);
 3800.0 => skankFilt.freq; 0.8 => skankFilt.Q;
 // Sample skanks — 4 different chords, selected by seed
@@ -441,11 +529,11 @@ if(skTest.open(smpDir + "skank_dminor.wav", FileIO.READ)) {
 // skank routes through master to reverb
 // reverb send via master bus
 
-// Skank pattern: sparser in dub — just occasional stabs, not constant off-beat
+// Skank on beats 2 and 4 (steps 4, 12) — gated by the arrangement like a desk mute
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
- [0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],
- [0,0,1,0,0,0,0,0,0,0,1,0,0,0,0,0]] @=> int skankPat[][];
+ [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0],
+ [0,0,0,0,1,0,0,0,0,0,0,0,1,0,0,0]] @=> int skankPat[][];
 
 // ============ RISER / FX ============
 Noise riserN => BPF riserBP => Gain riserG => master;
@@ -485,7 +573,7 @@ fun void readState() {
         0 => chordIdx;
         0 => phraseRepeat;
         for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
-        progs[progIdx][0] => chordRoot;
+        realChord(progs[progIdx][0]) => chordRoot;
         generateMotif();
         }
 
@@ -545,7 +633,7 @@ fun void readState() {
             if(energy >= 2) {
                 0.07 => ldDry.gain;
                 0.07 => snrG.gain;
-                0.15 => skankG.gain;
+                0.32 => skankG.gain;
             } else {
                 0.0 => ldAmpTarget;
                 0.0 => snrG.gain;
@@ -635,13 +723,15 @@ while(true) {
             for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
             if(phraseRepeat % 3 == 2 && energy >= 2) {
                 (seed * 13 + phraseRepeat) % 4 => int subIdx;
-                // Dub: up a 4th (+3 scale degrees)
-                (progs[progIdx][subIdx] + 3) % 5 => chordSub[subIdx];
+                // Dub: up a 4th (+3 degrees of the 7-note harmony scale), kept a real triad
+                realChord(progs[progIdx][subIdx] + 3) => int sub;
+                if(sub != realChord(progs[progIdx][subIdx])) sub => chordSub[subIdx];
             }
+            if(motifGenerated) setMutes(); // desk mutes move around each time through
         }
         phraseBar / 4 => chordIdx;
         if(chordIdx >= progs[progIdx].cap()) 0 => chordIdx;
-        progs[progIdx][chordIdx] => chordRoot;
+        realChord(progs[progIdx][chordIdx]) => chordRoot;
         if(chordSub[chordIdx] >= 0) chordSub[chordIdx] => chordRoot;
 
         // Energy decay
@@ -676,8 +766,8 @@ while(true) {
                 20.0 => fxHPF.freq;
                 0.28 => rvMix.gain;
                 0.45 => rvFb1.gain; 0.42 => rvFb2.gain;
-                0.06 => dlyWetTarget;
-                0.55 => dlyFb.gain;
+                DLY_WET_BASE => dlyWetTarget;
+                DLY_FB_BASE => dlyFb.gain;
             } else {
                 introBar $ float / introLen $ float => float p;
                 // HPF sweeps down: reveal the sub bass gradually
@@ -685,7 +775,7 @@ while(true) {
                 // Reverb + delay wash: classic dub intro — echoes building
                 0.38 => rvMix.gain;
                 0.50 => rvFb1.gain; 0.48 => rvFb2.gain;
-                0.10 => dlyWetTarget;
+                DLY_WET_BASE * 1.4 => dlyWetTarget;
                 0.62 => dlyFb.gain;
             }
         }
@@ -715,8 +805,8 @@ while(true) {
                     0.42 + p * 0.10 => rvFb2.gain;
                 } else if(fxType == 3) {
                     // Delay throw swell: crank the dub delay wet + feedback
-                    0.06 + p * 0.08 => dlyWetTarget;
-                    0.55 + p * 0.15 => dlyFb.gain;
+                    DLY_WET_BASE + p * 0.20 => dlyWetTarget;
+                    DLY_FB_BASE + p * 0.20 => dlyFb.gain;
                 }
             }
         }
@@ -724,8 +814,8 @@ while(true) {
             if(rvMix.gain() > 0.29) rvMix.gain() * 0.95 + 0.28 * 0.05 => rvMix.gain;
             if(rvFb1.gain() > 0.46) rvFb1.gain() * 0.95 + 0.45 * 0.05 => rvFb1.gain;
             if(rvFb2.gain() > 0.43) rvFb2.gain() * 0.95 + 0.42 * 0.05 => rvFb2.gain;
-            if(dlyFb.gain() > 0.56) dlyFb.gain() * 0.95 + 0.55 * 0.05 => dlyFb.gain;
-            if(dlyWetTarget > 0.065) 0.06 => dlyWetTarget;
+            if(dlyFb.gain() > DLY_FB_BASE + 0.01) dlyFb.gain() * 0.95 + DLY_FB_BASE * 0.05 => dlyFb.gain;
+            if(transition != 4 && dlyWetTarget > DLY_WET_BASE + 0.005) dlyWetTarget * 0.9 + DLY_WET_BASE * 0.1 => dlyWetTarget;
         }
     }
 
@@ -734,6 +824,10 @@ while(true) {
 
     0 => int kickMuted;
     0 => int hatFill;
+    // Mixing-desk mute for this bar (1 = drums out, 2 = bass out)
+    0 => int muteNow;
+    if(motifGenerated && energy >= 2 && transition == 0 && !introActive && phraseBar >= 0) dubMute[phraseBar] => muteNow;
+    if(muteNow == 1) 1 => kickMuted;
 
     if(transition == 2) {
         // DROP: kill kick, riser sweeps up
@@ -765,7 +859,7 @@ while(true) {
         800.0 => ldFiltTarget;
         0.0 => ldAmpTarget;
         // Boost delay wet so tails become prominent
-        0.1 => dlyWetTarget;
+        DLY_WET_BASE * 1.4 => dlyWetTarget;
     }
 
     // ---- KICK (one-drop: beat 3, humanized) ----
@@ -792,13 +886,13 @@ while(true) {
             ohEnv.keyOn();
         }
     } else {
-        if(chPat[energy][s]) {
+        if(muteNow != 1 && chPat[energy][s]) {
             if(useSamples) { 0 => smpHat.pos; 0.06 + 0.08 * hatVel[s] => smpHatG.gain; }
             0.02 + 0.05 * hatVel[s] => chG.gain;
             if(useSamples) chG.gain() * 0.3 => chG.gain;
             chEnv.keyOn();
         }
-        if(ohPat[energy][s]) {
+        if(muteNow != 1 && ohPat[energy][s]) {
             if(useSamples) { 0 => smpHatOpen.pos; 0.05 + 0.06 * hatVel[s] => smpHatOpenG.gain; }
             0.02 + 0.03 * hatVel[s] => ohG.gain;
             if(useSamples) ohG.gain() * 0.3 => ohG.gain;
@@ -807,15 +901,17 @@ while(true) {
     }
 
     // ---- SNARE / RIMSHOT (one-drop on beat 3, with delay throws) ----
-    if(snrPat[energy][s]) {
+    if(muteNow != 1 && snrPat[energy][s]) {
         snrVel[s] => float sVel;
         if(useSamples) { 0 => smpRimshot.pos; sVel * 0.20 => smpRimshotG.gain; }
         sVel * 0.08 => snrG.gain;
         if(useSamples) snrG.gain() * 0.3 => snrG.gain;
         snrEnv.keyOn();
-        // Throw snare into delay — seed-based, not every hit
-        if((seed + stepCount) % 3 == 0) {
-            0.4 => snrToDelay.gain;
+        // Throw the snare into the delay at chord ends and into desk mutes — not every hit
+        0 => int nextMute;
+        if(motifGenerated && energy >= 2) dubMute[(phraseBar + 1) % 16] => nextMute;
+        if(phraseBar % 4 == 3 || nextMute > 0 || muteNow == 2) {
+            0.9 => snrToDelay.gain;
         } else {
             0.0 => snrToDelay.gain;
         }
@@ -824,7 +920,7 @@ while(true) {
     }
 
     // ---- DRUM MICRO-VARIATION ----
-    if(energy >= 2) {
+    if(energy >= 2 && muteNow != 1) {
         (seed + phraseBar * 7) % 8 => int drumVar;
         // Extra ghost hat on empty step
         if(drumVar < 3 && s == 9 && !chPat[energy][s]) {
@@ -839,7 +935,7 @@ while(true) {
     }
 
     // ---- DRUM FILL (rimshot rolls into delay at phrase boundaries) ----
-    if(drumFill > 0 && energy >= 1) {
+    if(drumFill > 0 && energy >= 1 && muteNow != 1) {
         if(drumFill == 2) {
             // Big fill (end of 16-bar phrase): snare roll into delay — echoes become the fill
             if(s >= 6 && s % 2 == 0 && !snrPat[energy][s]) {
@@ -868,85 +964,103 @@ while(true) {
     if(motifGenerated) arrangement[phraseBar] => arrLevel;
     if(energy < 2) { if(arrLevel > 1) 1 => arrLevel; }
 
-    // ---- SKANK GUITAR (off-beat chops, follows arrangement) ----
-    if(transition != 4 && energy >= 2 && skankPat[energy][s]) {
+    // ---- SKANK GUITAR (beats 2 & 4, chord chop, comes and goes with the arrangement) ----
+    if(transition != 4 && energy >= 2 && arrLevel >= 2 && skankPat[energy][s]) {
         if(useSkankSamples) {
             // Real guitar sample — pick from 4 variations
             (seed + phraseBar) % 4 => int skIdx;
             0 => smpSkank[skIdx].pos;
             0.20 + Math.random2f(0.0, 0.08) => smpSkankG.gain;
         } else {
-            // Synth fallback
-            Std.mtof(note(chordRoot, 4)) => skankSynth.freq;
+            // Synth fallback: close-voiced triad around middle C
+            48 + key => int skLo; if(key > 5) skLo - 12 => skLo;
+            Std.mtof(fold(key + hSemi(chordRoot), skLo + 6, 12)) => skankSynth.freq;
+            Std.mtof(fold(key + hSemi(chordRoot + 2), skLo + 6, 12)) => skankSynth2.freq;
+            Std.mtof(fold(key + hSemi(chordRoot + 4), skLo + 6, 12)) => skankSynth3.freq;
             0.4 + Math.random2f(0.0, 0.2) => skankSynth.pluckPos;
-            0.8 => skankSynth.pluck;
+            0.8 => skankSynth.pluck; 0.7 => skankSynth2.pluck; 0.7 => skankSynth3.pluck;
             skankChop.keyOn();
         }
+        // Last skank of each chord goes into the echo
+        if(s == 12 && phraseBar % 4 == 3) 0.8 => skankToDelay.gain; else 0.0 => skankToDelay.gain;
     }
 
-    // ---- SUB BASS (cell-derived, follows arrangement) ----
-    if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
+    // ---- SUB BASS (the riddim: cell-derived, gated notes, desk mute 2 drops it out) ----
+    0 => int bassOn;
+    if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated && muteNow != 2) 1 => bassOn;
+    if(bassRemain > 0) {
+        bassRemain - 1 => bassRemain;
+        if(bassRemain == 0) bassEnv.keyOff();
+    }
+    if(!bassOn) {
+        if(bassRemain > 0) { 0 => bassRemain; bassEnv.keyOff(); }
+    } else {
         bassLine[phraseStep % PHRASE_LEN] => int bDeg;
-        if(bDeg >= 0) {
-            scales[scaleType] @=> int scl[];
-            (bDeg + chordRoot) % scl.cap() => bDeg;
-            if(bDeg < 0) bDeg + scl.cap() => bDeg;
-            1 => int bassOct; // very low — dub sub lives in octave 1-2
-            // Occasional octave up on passing tones in bar 3
-            if(phraseStep >= 32 && phraseStep < 48 && phraseStep % 4 != 0) 2 => bassOct;
-            Std.mtof(note(bDeg, bassOct)) => float bFreq;
+        if(bDeg != REST) {
+            rootIdx() => int ri;
+            // Tonic sits E1..D#2 (41-78 Hz): heavy but still pitched
+            24 + key => int bBase; if(key < 4) bBase + 12 => bBase;
+            bBase + mSemi(ri + bDeg) => int bMidi;
+            fold(bMidi, 28, 26) => bMidi;
+            if(bassLen[phraseStep % PHRASE_LEN] >= 3) snapToChord(bMidi, -1) => bMidi; // long notes sit on the chord
+            Std.mtof(bMidi) => float bFreq;
             bFreq => bassOsc1.freq;
             bFreq * 1.002 => bassOsc2.freq; // slight detune for width
+            bFreq => bassTri.freq;
             // Bass drift LFO — slow, alive
             bassDriftPhase + 0.0001 => bassDriftPhase;
             bassOsc2.freq() + Math.sin(bassDriftPhase) * 0.3 => bassOsc2.freq;
-            // Filter follows phrase: opens in bar 3
-            if(phraseStep >= 32 && phraseStep < 48) {
-                200.0 + Math.random2f(0.0, 100.0) => bassFiltTarget;
-            } else {
-                120.0 + Math.random2f(0.0, 60.0) => bassFiltTarget;
-            }
+            bassLen[phraseStep % PHRASE_LEN] => bassRemain;
+            if(bassRemain < 1) 1 => bassRemain;
+            bassEnv.keyOn();
+            // Filter follows phrase: opens in bar 3, accents on the beat
+            if(phraseStep >= 32 && phraseStep < 48) 520.0 => bassFiltTarget;
+            else if(s % 4 == 0) 420.0 => bassFiltTarget;
+            else 340.0 => bassFiltTarget;
         }
     }
 
-    // ---- PAD (dark minor, follows arrangement + phrase dynamics) ----
+    // ---- PAD (dark minor triad, follows arrangement + phrase dynamics) ----
     if(transition != 4 && s == 0 && arrLevel >= 2) {
-        chordRoot => int pRoot;
-        chordRoot + 2 => int pDeg2;
-        chordRoot + 4 => int pDeg3;
-        Std.mtof(note(pRoot, 3)) => padOsc1.freq; // lower octave for dub
-        Std.mtof(note(pDeg2, 3)) => padOsc2.freq;
-        Std.mtof(note(pDeg3, 3)) => padOsc3.freq;
+        // Close voicing between E3 and E4: smooth voice leading, clear of the sub
+        Std.mtof(fold(key + hSemi(chordRoot), 52, 12)) => padOsc1.freq;
+        Std.mtof(fold(key + hSemi(chordRoot + 2), 52, 12)) => padOsc2.freq;
+        Std.mtof(fold(key + hSemi(chordRoot + 4), 52, 12)) => padOsc3.freq;
         // Detune for width
         padOsc1.freq() * 0.998 => padOsc1.freq;
         padOsc3.freq() * 1.002 => padOsc3.freq;
         // Pad dynamics follow phrase position
         phraseBar % 4 => int barInChord;
-        if(barInChord < 2) 0.035 => padGainTarget;
-        else if(barInChord == 2) 0.07 => padGainTarget;
-        else 0.025 => padGainTarget;
+        if(barInChord < 2) 0.05 => padGainTarget;
+        else if(barInChord == 2) 0.09 => padGainTarget;
+        else 0.035 => padGainTarget;
         if(energy >= 3) padGainTarget * 1.3 => padGainTarget;
-        // Dark filter — opens slowly through phrase
-        250.0 + barInChord * 60.0 => padFiltTarget; // darker throughout
+        // Dark filter — opens through the chord
+        550.0 + barInChord * 120.0 => padFiltTarget;
     } else if(arrLevel < 2) {
         0.0 => padGainTarget;
     }
 
-    // ---- MELODICA/ORGAN LEAD (cell motif, with delay throws) ----
+    // ---- MELODICA/ORGAN LEAD (cell motif, selective delay throws) ----
     if(transition != 4 && motifGenerated && arrLevel >= 3) {
         motif[phraseStep % PHRASE_LEN] => int deg;
         // Motif variation per repetition
         phraseBar / 4 => int motifRep;
-        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => deg;
-        if(motifRep == 3 && deg >= 0 && phraseStep % 8 == 6) deg - 1 => deg;
-        if(deg >= 0) {
-            scales[scaleType] @=> int scl[];
-            (deg + chordRoot) % scl.cap() => deg;
-            if(deg < 0) deg + scl.cap() => deg;
-            4 => int ldOct;
-            if(energy >= 3 && phraseStep >= 32) 5 => ldOct;
-            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) 5 => ldOct;
-            Std.mtof(note(deg, ldOct)) => float ldFreq;
+        if(motifRep == 1 && deg != REST && (seed + phraseStep) % 5 == 0) REST => deg;
+        if(motifRep == 3 && deg != REST && phraseStep % 8 == 6) deg - 1 => deg;
+        if(deg != REST) {
+            rootIdx() => int ri;
+            // Lead tonic G3..F#4 region: melodica register, above the pad
+            60 + key => int lBase; if(key > 7) lBase - 12 => lBase;
+            lBase + mSemi(ri + deg) => int lMidi;
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) lMidi + 12 => lMidi;
+            if(lMidi > 84) lMidi - 12 => lMidi; // keep it a melodica, not a whistle
+            // Sustained notes must not rub against the chord; quick passing/approach notes may
+            0 => int passing;
+            if(motif[(phraseStep + 1) % PHRASE_LEN] != REST) 1 => passing;
+            if(!passing) snapToChord(lMidi, lastLeadDeg) => lMidi;
+            lMidi => lastLeadDeg; // (holds the last lead MIDI note)
+            Std.mtof(lMidi) => float ldFreq;
             ldFreq => ldSin1.freq;
             ldFreq * 1.003 => ldSin2.freq; // detune pair
             ldFreq => ldTri1.freq;
@@ -957,20 +1071,18 @@ while(true) {
 
             // Velocity: sparse, bar 3 peaks, bar 4 pulls back
             phraseStep % 16 => int localStep;
-            0.03 => float ldVel;
-            if(localStep % 4 == 0) 0.05 => ldVel;
-            else if(localStep % 2 == 0) 0.04 => ldVel;
+            0.07 => float ldVel;
+            if(localStep % 4 == 0) 0.11 => ldVel;
+            else if(localStep % 2 == 0) 0.09 => ldVel;
             if(phraseStep >= 32 && phraseStep < 48) ldVel * 1.15 => ldVel;
             if(phraseStep >= 48) ldVel * 0.6 => ldVel;
-            1000.0 + Math.random2f(0.0, 400.0) => ldFiltTarget; // darker, sits behind the guitar
+            1300.0 + Math.random2f(0.0, 500.0) => ldFiltTarget;
             ldVel => ldAmpTarget;
 
-            // DELAY THROW: in dub, throw EVERY note into the delay — echoes ARE the melody
-            0.6 => ldToDelay.gain;
-            // Extra hot throw on marked notes
-            if(delayThrow[phraseStep % PHRASE_LEN]) {
-                0.8 => ldToDelay.gain;
-            }
+            // DELAY THROW: a light send on every note, a full throw on the marked ones
+            // (the send decays per substep, so only the attack is thrown)
+            0.12 => ldToDelay.gain;
+            if(delayThrow[phraseStep % PHRASE_LEN]) 0.9 => ldToDelay.gain;
         }
     } else if(arrLevel < 3) {
         0.0 => ldAmpTarget;
@@ -993,9 +1105,9 @@ while(true) {
     for(0 => int sub; sub < SUBSTEPS; sub++) {
         // Kick pitch envelope: deeper and rounder for dub — longer sustain
         if(kickOsc.gain() > 0.005) {
-            35.0 + 60.0 * Math.exp(-kickPh * 6.0) => kickOsc.freq;
+            44.0 + 56.0 * Math.exp(-kickPh * 6.0) => kickOsc.freq;
             kickOsc.freq() * 3.0 => kickLPF.freq;
-            kickOsc.gain() * 0.96 => kickOsc.gain; // slower decay = heavier
+            kickOsc.gain() * 0.93 => kickOsc.gain; // round but short enough to leave the bass its own room
             kickPh + 0.06 => kickPh;
         } else {
             0.0 => kickOsc.gain;
@@ -1015,7 +1127,7 @@ while(true) {
 
         // Bass filter slide — slow, heavy for dub
         bassF.freq() + (bassFiltTarget - bassF.freq()) * 0.08 => bassF.freq;
-        if(bassFiltTarget > 100.0) bassFiltTarget * 0.996 => bassFiltTarget;
+        if(bassFiltTarget > 300.0) bassFiltTarget * 0.996 => bassFiltTarget;
 
         // Lead filter — gentle movement, organ-like
         ldF.freq() + (ldFiltTarget - ldF.freq()) * 0.025 => ldF.freq;
@@ -1034,7 +1146,7 @@ while(true) {
         padLfoPhase + padLfoRate => padLfoPhase;
         Math.sin(padLfoPhase) * 120.0 => float padLfoMod;
         padF.freq() + ((padFiltTarget + padLfoMod) - padF.freq()) * 0.012 => padF.freq;
-        if(padFiltTarget > 250.0) padFiltTarget * 0.9998 => padFiltTarget;
+        if(padFiltTarget > 550.0) padFiltTarget * 0.9998 => padFiltTarget;
         padG.gain() + (padGainTarget - padG.gain()) * 0.008 => padG.gain;
         if(transition == 4) 0.0 => padGainTarget;
 
@@ -1042,7 +1154,9 @@ while(true) {
         dlyWet.gain() + (dlyWetTarget - dlyWet.gain()) * 0.02 => dlyWet.gain;
 
         // Snare delay send decay — don't leave it open
-        if(snrToDelay.gain() > 0.01) snrToDelay.gain() * 0.98 => snrToDelay.gain;
+        if(snrToDelay.gain() > 0.01) snrToDelay.gain() * 0.9 => snrToDelay.gain;
+        if(skankToDelay.gain() > 0.01) skankToDelay.gain() * 0.85 => skankToDelay.gain;
+        if(ldToDelay.gain() > 0.13) ldToDelay.gain() * 0.93 => ldToDelay.gain;
 
         // FX: smooth HPF back toward 20Hz when not active (skip during intro + HPF sweep)
         if(fxType != 1 && !introActive) fxHPF.freq() + (20.0 - fxHPF.freq()) * 0.04 => fxHPF.freq;

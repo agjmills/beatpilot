@@ -70,7 +70,7 @@ Switch with `/beatpilot:vibe <genre>` in Claude Code, or `./vibe.sh <genre>` fro
 | **techno** | 128 | Four-on-the-floor kick, acid bass, minimal lead, drops and risers |
 | **dnb** | 174 | Breakbeats, heavy sub bass, reese, atmospheric pads, snare rolls |
 | **lofi** | 85 | Jazzy vibraphone chords, brushy drums, vinyl crackle, Rhodey lead |
-| **reggae** | 75 | Locked D-minor groove, real guitar skank samples, bass solos at peak energy |
+| **reggae** | 75 | One-drop to steppers, chord skank on 2 and 4, organ bubble, melodic bass with walk-ups |
 | **dub** | 70 | Dark phrygian, sparse arrangement, every lead note thrown into delay |
 | **goa** | 145 | Rolling acid bass, eastern modes, psychedelic FM lead, archive-sourced voice samples |
 | **piano** | 60 | Neoclassical solo piano. Sparse rolled chords, modal cadences, cathedral reverb. Real Salamander samples when installed |
@@ -223,7 +223,7 @@ This downloads samples from [Virtuosity Drums](https://github.com/sfzinstruments
 | **Lofi** | Lo-fi mic | Warm, dusty, filtered — like a tape machine |
 | **Techno** | Mid mic | Punchy, present, tight — studio monitor feel |
 | **DnB** | Snare mic | Cracking, aggressive, close — in your face |
-| **Reggae** | Room mic + real guitar samples | Deep, woody — CC0 acoustic guitar skanks |
+| **Reggae** | Room mic | Deep, woody (the skank is synthesized; guitar skank samples are not in the pack yet) |
 | **Dub** | Room mic | Deep, spacious, reverberant + cross-stick rimshots |
 | **Goa** | Mid mic | Punchy 4/4 + optional voice samples (drop-in `samples/goa/voice/voice_N.wav`) |
 | **Piano** | Salamander Grand Piano V3 (CC0) | Yamaha C5 grand, 11 keyzones every 6 semitones, real piano replaces FM synthesis |
@@ -246,7 +246,7 @@ beatpilot/
 │   ├── techno.ck            # 128 BPM — kicks, acid, drops
 │   ├── dnb.ck               # 174 BPM — breakbeats, reese, atmosphere
 │   ├── lofi.ck              # 85 BPM — jazz chords, vinyl, Rhodey
-│   ├── reggae.ck            # 75 BPM — D-minor groove, skank samples, bass solos
+│   ├── reggae.ck            # 75 BPM — one-drop, skank, organ bubble, melodic bass
 │   ├── dub.ck               # 70 BPM — dark phrygian, every note delayed
 │   ├── goa.ck               # 145 BPM — acid bass, FM lead, voice samples
 │   ├── piano.ck             # 60 BPM — neoclassical solo piano, Salamander samples
@@ -280,7 +280,7 @@ Every engine is built in [ChucK](https://chuck.cs.princeton.edu/) — synthesis-
 - **Effects**: 4-tap cross-fed delay reverb, lead delay with feedback, master HPF for sweeps
 - **Dub special**: Dedicated delay throw bus — select notes get "thrown" into a high-feedback delay
 - **Goa special**: Spoken-word voice clips routed through the lead delay at phrase boundaries
-- **Reggae special**: Real CC0 acoustic guitar skanks on the off-beat
+- **Reggae special**: Chord skank on beats 2 and 4 with an organ bubble on the off-beats
 
 ## Prerequisites
 

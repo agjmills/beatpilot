@@ -67,8 +67,11 @@ int chordSub[4];
 // Bar 1: call (short figure), Bar 2: response (variation),
 // Bar 3: development (higher/busier), Bar 4: resolution (back to root)
 64 => int PHRASE_LEN;
-int motif[64];          // lead: scale degrees per step (-1 = rest)
-int bassLine[64];       // bass: scale degrees per step (-1 = rest)
+int motif[64];          // lead: scale degrees per step (REST = rest)
+int bassLine[64];       // bass: scale degrees per step (REST = rest)
+// Degrees can be negative (inversions, approach notes below the root), so the
+// rest marker must not be -1.
+-99 => int REST;
 0 => int motifGenerated;
 0 => int phraseStep;    // current position in the 64-step phrase
 
@@ -77,9 +80,27 @@ int bassLine[64];       // bass: scale degrees per step (-1 = rest)
 // 0=nothing, 1=bass only, 2=bass+pad, 3=bass+pad+lead
 int arrangement[16];
 
+// Arrangement templates are aligned to the 4-bar motif so the lead is always
+// heard from the cell statement (motif bar 1), never starting mid-phrase.
+fun void genArrangement(int arrType) {
+    if(arrType == 0) {
+        // Build: bass -> +pad -> +lead (two full motif reps)
+        [1,1,1,1, 2,2,2,2, 3,3,3,3, 3,3,3,3] @=> int arrA[];
+        for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
+    } else if(arrType == 1) {
+        // Call-response: lead states the call, the groove answers, then full
+        [2,2,2,2, 3,3,1,1, 3,3,1,1, 3,3,3,3] @=> int arrB[];
+        for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
+    } else {
+        // Full then strip: everything up front, breakdown at the end
+        [2,2,2,2, 3,3,3,3, 3,3,3,3, 1,1,2,2] @=> int arrC[];
+        for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
+    }
+}
+
 fun void generateMotif() {
     seed => int s;
-    for(0 => int i; i < PHRASE_LEN; i++) -1 => motif[i];
+    for(0 => int i; i < PHRASE_LEN; i++) REST => motif[i];
 
     // --- CELL-BASED COMPOSITION ---
     // Techno: denser than lofi, more repetitive/hypnotic
@@ -128,48 +149,32 @@ fun void generateMotif() {
     // --- BASS LINE: derived from the same cell ---
     // Bass plays the cell's root notes on strong beats, with the cell's
     // first interval as a passing tone. Simpler, anchoring the harmony.
-    for(0 => int i; i < PHRASE_LEN; i++) -1 => bassLine[i];
+    for(0 => int i; i < PHRASE_LEN; i++) REST => bassLine[i];
 
-    // Bar 1: root on 1, cell interval on the &
-    0 => bassLine[0];
-    cellDeg[1] => bassLine[6];
-    0 => bassLine[8];
+    // Techno: the kick owns the downbeats, so the bass sits on the offbeat
+    // 8ths (steps 2/6/10/14) -- "boom-ba" -- and never collides with the kick.
+    // Roots on the main offbeats, the cell's intervals as passing tones.
+    // Bar 1: roots, cell leap as the passing tone
+    0 => bassLine[2]; 0 => bassLine[6]; cellDeg[1] => bassLine[10]; 0 => bassLine[14];
 
-    // Bar 2: same rhythm, transposed with the cell variation
+    // Bar 2: same rhythm, passing tones follow the lead's variation type
+    0 => bassLine[18]; 0 => bassLine[22]; 0 => bassLine[30];
     if(varType == 0) {
-        2 => bassLine[16]; cellDeg[1] + 2 => bassLine[22]; 2 => bassLine[24];
+        cellDeg[1] + 2 => bassLine[26]; cellDeg[2] + 2 => bassLine[29];
     } else if(varType == 1) {
-        0 => bassLine[16]; 0 - leap1 => bassLine[22]; 0 => bassLine[24];
+        0 - leap1 => bassLine[26]; cellDeg[0] - leap1 - resolves[(s / 2) % resolves.cap()] => bassLine[29];
     } else {
-        1 => bassLine[16]; cellDeg[2] + 1 => bassLine[22]; 1 => bassLine[24];
+        cellDeg[2] + 1 => bassLine[26]; cellDeg[1] + 1 => bassLine[29];
     }
 
-    // Bar 3: busier — follows lead rhythm but stays on roots + passing tones
-    0 => bassLine[32]; cellDeg[1] => bassLine[34];
-    3 => bassLine[36]; cellDeg[1] + 3 => bassLine[38];
-    0 => bassLine[40]; cellDeg[2] => bassLine[44];
+    // Bar 3: busier -- 16th pickups, mirrors the lead's development
+    0 => bassLine[34]; 0 => bassLine[35]; cellDeg[1] => bassLine[38];
+    0 => bassLine[42]; cellDeg[2] => bassLine[43]; cellDeg[1] => bassLine[46];
 
-    // Bar 4: simple — root, then rest until the resolve
-    0 => bassLine[48];
-    0 => bassLine[56];
+    // Bar 4: simple -- just roots, resolving
+    0 => bassLine[50]; 0 => bassLine[54]; 0 => bassLine[58]; 0 => bassLine[62];
 
-    // --- ARRANGEMENT: which bars have which layers ---
-    // 16-bar phrase with structure, not everything all the time
-    // Seed varies the arrangement shape
-    s % 3 => int arrType;
-    if(arrType == 0) {
-        // Build: bass → +pad → +lead → strip
-        [1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,1,1] @=> int arrA[];
-        for(0 => int i; i < 16; i++) arrA[i] => arrangement[i];
-    } else if(arrType == 1) {
-        // Call-response: lead bars alternate with bass-only bars
-        [1,1,3,3, 1,1,3,3, 2,2,3,3, 3,3,2,1] @=> int arrB[];
-        for(0 => int i; i < 16; i++) arrB[i] => arrangement[i];
-    } else {
-        // Full then strip: everything then breakdown
-        [2,2,3,3, 3,3,3,3, 2,2,2,2, 1,1,2,2] @=> int arrC[];
-        for(0 => int i; i < 16; i++) arrC[i] => arrangement[i];
-    }
+    genArrangement(s % 3);
 
     0 => phraseStep;
     1 => motifGenerated;
@@ -234,8 +239,23 @@ if(smpTest.open(smpDir + "kick.wav", FileIO.READ)) {
 
 fun int note(int degree, int octave) {
     scales[scaleType] @=> int scl[];
-    if(degree < 0) return 0;
-    return key + octave * 12 + scl[degree % scl.cap()] + (degree / scl.cap()) * 12;
+    scl.cap() => int n;
+    // floor division so negative degrees go below the root, not to MIDI 0
+    degree / n => int oct;
+    degree % n => int idx;
+    if(idx < 0) { idx + n => idx; oct - 1 => oct; }
+    // keys G..B sit an octave lower so every key lands in the same register
+    0 => int kOff;
+    if(key >= 7) -12 => kOff;
+    return key + kOff + octave * 12 + scl[idx] + oct * 12;
+}
+
+// Chord root as a transposition that stays near home: roots 3/4 go DOWN
+// (-2/-1 degrees) instead of up, so the motif keeps its contour and register
+// instead of being folded into one octave with % 5.
+fun int chordShift(int r) {
+    if(r >= 3) return r - 5;
+    return r;
 }
 
 // ============ KICK ============
@@ -253,7 +273,7 @@ kickClickEnv.set(0.2::ms, 8::ms, 0.0, 3::ms);
 [[1,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
  [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],
  [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0],
- [1,0,0,0,1,0,0,0,1,0,0,0,1,0,1,0]] @=> int kPat[][];
+ [1,0,0,0,1,0,0,0,1,0,0,0,1,0,0,0]] @=> int kPat[][];
 
 // ============ VELOCITY MAPS ============
 // Hat velocity: accents on beats, ghost notes on off-beats (0.0-1.0)
@@ -284,10 +304,13 @@ ohEnv.set(1::ms, 150::ms, 0.03, 100::ms);
  [0,0,0,0,0,0,0,1,0,0,0,1,0,0,1,0]] @=> int ohPat[][];
 
 // ============ BASS ============
-TriOsc bassOsc => LPF bassF => Gain bassG => master;
-0.6 => bassOsc.gain;
-200.0 => bassF.freq; 4.0 => bassF.Q;
-0.12 => bassG.gain;
+// Tri body + detuned saw for bite, through an envelope (was an un-enveloped drone)
+TriOsc bassOsc => LPF bassF => ADSR bassEnv => Gain bassG => master;
+SawOsc bassOsc2 => bassF;
+0.6 => bassOsc.gain; 0.18 => bassOsc2.gain;
+200.0 => bassF.freq; 2.5 => bassF.Q;
+bassEnv.set(2::ms, 150::ms, 0.0, 30::ms);
+0.30 => bassG.gain;
 200.0 => float bassFiltTarget;
 
 [[-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1],
@@ -312,9 +335,12 @@ TriOsc bassOsc => LPF bassF => Gain bassG => master;
 
 // ============ LEAD ============
 // Sine fundamental + quiet octave harmonic = clean, bell-like tone
-SinOsc ldOsc1 => LPF ldF => Gain ldDry => master;
+SinOsc ldOsc1 => LPF ldF => ADSR ldEnv => Gain ldDry => master;
 SinOsc ldOsc2 => ldF;  // octave up, quieter
-0.5 => ldOsc1.gain; 0.18 => ldOsc2.gain;
+SinOsc ldOsc3 => ldF;  // detuned partner for width
+SinOsc ldDrift => blackhole; 0.07 => ldDrift.freq; // slow pitch drift on the partner
+0.4 => ldOsc1.gain; 0.15 => ldOsc2.gain; 0.3 => ldOsc3.gain;
+ldEnv.set(4::ms, 260::ms, 0.25, 180::ms);
 2800.0 => ldF.freq; 0.8 => ldF.Q; // gentle roll-off, not aggressive
 0.0 => ldDry.gain;
 2800.0 => float ldFiltTarget;
@@ -323,18 +349,22 @@ SinOsc ldOsc2 => ldF;  // octave up, quieter
 -1 => int lastLeadDeg;
 
 // Lead delay: dotted-eighth feedback delay for rhythmic echoes
-ldDry => Delay ldDly1 => Gain ldDlyFb => LPF ldDlyF => master;
-ldDlyFb => ldDly1; // feedback loop
+// (Previously the wet gain sat inside the feedback loop, so loop gain was
+// 0.04*0.45 -- one echo at -48 dB. Wet and feedback are now separate.)
+ldDry => Delay ldDly1 => LPF ldDlyF => Gain ldDlyWet => master;
+ldDlyF => Gain ldDlyFb => ldDly1; // feedback loop (darkened each repeat)
 (stepDur * 3) => ldDly1.max => ldDly1.delay; // dotted eighth = 3 steps
 0.45 => ldDlyFb.gain;   // feedback amount — decays over ~3 repeats
-0.04 => ldDly1.gain;    // wet level
+0.30 => ldDlyWet.gain;  // wet level
 2500.0 => ldDlyF.freq;  // darken repeats
 
 // ============ PAD ============
 TriOsc padOsc1 => LPF padF => Gain padG => master;
 SinOsc padOsc2 => padF;
 TriOsc padOsc3 => padF;
-0.25 => padOsc1.gain; 0.3 => padOsc2.gain; 0.2 => padOsc3.gain;
+TriOsc padOsc4 => padF; TriOsc padOsc5 => padF; // detuned partners (root, 5th-ish)
+0.22 => padOsc1.gain; 0.28 => padOsc2.gain; 0.18 => padOsc3.gain;
+0.16 => padOsc4.gain; 0.12 => padOsc5.gain;
 400.0 => padF.freq; 1.8 => padF.Q;
 0.0 => padG.gain;
 0.0 => float padGainTarget;
@@ -342,11 +372,34 @@ TriOsc padOsc3 => padF;
 0 => int padLastDeg;
 0.0 => float padLfoPhase;
 
+// ============ REVERB (4-tap cross-fed delay network) ============
+Gain revIn => blackhole;
+Gain revOut => master;
+0.12 => float revMixBase; revMixBase => revOut.gain;
+0.36 => float revFbBase;
+[43, 61, 79, 97] @=> int revMs[];
+Delay rvD[4]; LPF rvLP[4]; Gain rvFb[4];
+for(0 => int i; i < 4; i++) {
+    revIn => rvD[i] => rvLP[i] => revOut; // unity in the loop; mix set on revOut
+    (revMs[i] * 1.0)::ms => rvD[i].max => rvD[i].delay;
+    2600.0 => rvLP[i].freq;
+    rvLP[i] => rvFb[i];
+    revFbBase => rvFb[i].gain;
+}
+for(0 => int i; i < 4; i++) rvFb[i] => rvD[(i + 1) % 4]; // cross-feed
+fun void setRevFb(float g) { for(0 => int i; i < 4; i++) g => rvFb[i].gain; }
+// sends
+padG => Gain padSend => revIn; 0.6 => padSend.gain;
+ldDry => Gain ldSend => revIn; 0.5 => ldSend.gain;
+ldDlyWet => Gain dlySend => revIn; 0.4 => dlySend.gain;
+
 // ============ CLAP ============
 Noise clpN => BPF clpBP => ADSR clpEnv => Gain clpG => master;
 1200.0 => clpBP.freq; 2.0 => clpBP.Q;
 clpEnv.set(0.5::ms, 60::ms, 0.0, 20::ms);
 0.0 => clpG.gain;
+clpG => Gain clpSend => revIn; 0.5 => clpSend.gain;
+4.0 => float CLAPX; // clap noise loses most energy in the BPF; compensate
 
 [[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
  [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -450,8 +503,7 @@ fun void readState() {
             }
 
             if(energy >= 2) {
-                0.09 => ldDry.gain;
-                0.08 => clpG.gain;
+                0.08 * CLAPX => clpG.gain;
             } else {
                 0.0 => ldAmpTarget;
                 0.0 => clpG.gain;
@@ -540,6 +592,9 @@ while(true) {
             0 => phraseBar;
             phraseRepeat + 1 => phraseRepeat;
             for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
+            // Each 16-bar pass gets a different arrangement shape, so the same
+            // motif is heard in a new context instead of an identical loop.
+            if(motifGenerated) genArrangement((seed + phraseRepeat) % 3);
             if(phraseRepeat % 3 == 2 && energy >= 2) {
                 (seed * 13 + phraseRepeat) % 4 => int subIdx;
                 // Modal interchange: shift chord up 2 degrees
@@ -597,14 +652,16 @@ while(true) {
                 0 => introActive;
                 20.0 => fxHPF.freq;
                 0.45 => ldDlyFb.gain;
-                0.06 => ldDly1.gain;
+                0.30 => ldDlyWet.gain;
+                revMixBase => revOut.gain;
             } else {
                 introBar $ float / introLen $ float => float p;
                 // HPF sweeps down: classic techno filter open
                 2500.0 * (1.0 - p) * (1.0 - p) + 20.0 => fxHPF.freq;
                 // Delay feedback wash during intro
                 0.60 => ldDlyFb.gain;
-                0.08 => ldDly1.gain;
+                0.40 => ldDlyWet.gain;
+                revMixBase * 2.0 => revOut.gain;
             }
         }
 
@@ -630,17 +687,22 @@ while(true) {
                     // Pad filter resonance sweep: Q rises, filter sweeps
                     1.8 + p * 6.0 => padF.Q;
                     padFiltTarget + p * 800.0 => padF.freq;
+                    // ...plus a reverb wash
+                    revMixBase * (1.0 + p * 1.5) => revOut.gain;
+                    setRevFb(revFbBase + p * 0.14);
                 } else if(fxType == 3) {
                     // Delay feedback swell
-                    0.45 + p * 0.30 => ldDlyFb.gain;
-                    0.06 + p * 0.04 => ldDly1.gain;
+                    0.45 + p * 0.25 => ldDlyFb.gain;
+                    0.30 + p * 0.20 => ldDlyWet.gain;
                 }
             }
         }
         if(fxType == 0 && !introActive) {
             if(padF.Q() > 1.9) padF.Q() * 0.92 + 1.8 * 0.08 => padF.Q;
             if(ldDlyFb.gain() > 0.46) ldDlyFb.gain() * 0.95 + 0.45 * 0.05 => ldDlyFb.gain;
-            if(ldDly1.gain() > 0.065) ldDly1.gain() * 0.93 + 0.06 * 0.07 => ldDly1.gain;
+            if(ldDlyWet.gain() > 0.31) ldDlyWet.gain() * 0.93 + 0.30 * 0.07 => ldDlyWet.gain;
+            revOut.gain() * 0.95 + revMixBase * 0.05 => revOut.gain;
+            rvFb[0].gain() * 0.95 + revFbBase * 0.05 => float rfb; setRevFb(rfb);
         }
     }
 
@@ -714,7 +776,7 @@ while(true) {
     } else {
         if(chPat[energy][s]) {
             if(useSamples) { 0 => smpHat.pos; 0.08 + 0.10 * hatVel[s] => smpHatG.gain; }
-            0.03 + 0.06 * hatVel[s] => chG.gain;
+            0.05 + 0.09 * hatVel[s] => chG.gain;
             if(useSamples) chG.gain() * 0.3 => chG.gain;
             chEnv.keyOn();
         }
@@ -728,6 +790,7 @@ while(true) {
 
     // ---- CLAP ----
     if(clpPat[energy][s]) {
+        if(drumFill != 2) 0.08 * CLAPX => clpG.gain; // undo fill crescendo leftovers
         if(useSamples) { 0 => smpClap.pos; 0.15 => smpClapG.gain; }
         clpEnv.keyOn();
     }
@@ -754,7 +817,7 @@ while(true) {
                 chEnv.keyOn();
             }
             if(s >= 8 && s % 2 == 0) {
-                0.04 + (s $ float) / 16.0 * 0.04 => clpG.gain;
+                (0.04 + (s $ float) / 16.0 * 0.04) * CLAPX => clpG.gain;
                 clpEnv.keyOn();
             }
             if(s >= 12) {
@@ -781,30 +844,39 @@ while(true) {
     // ---- BASS (cell-derived, follows arrangement) ----
     if(transition != 4 && energy >= 1 && arrLevel >= 1 && motifGenerated) {
         bassLine[phraseStep % PHRASE_LEN] => int bDeg;
-        if(bDeg >= 0) {
-            (bDeg + chordRoot) % 5 => bDeg;
-            if(bDeg < 0) bDeg + 5 => bDeg;
-            2 => int bassOct;
-            // Octave jump on bar 3 passing tones
-            if(phraseStep >= 32 && phraseStep < 48 && phraseStep % 2 != 0) 3 => bassOct;
-            Std.mtof(note(bDeg, bassOct)) => bassOsc.freq;
+        // energy 1: half-time, only the 2nd-and-4th-kick offbeats
+        if(energy == 1 && s % 8 != 2) REST => bDeg;
+        if(bDeg != REST) {
+            bDeg + chordShift(chordRoot) => bDeg;
+            note(bDeg, 3) => int bMidi;
+            // keep the bass between ~43 Hz and ~147 Hz: audible, clear of the kick's sub
+            while(bMidi < 29) bMidi + 12 => bMidi;
+            while(bMidi > 50) bMidi - 12 => bMidi;
+            Std.mtof(bMidi) => bassOsc.freq;
+            bassOsc.freq() * 1.003 => bassOsc2.freq;
             // Filter follows phrase energy: opens up in bar 3
             if(phraseStep >= 32 && phraseStep < 48) {
-                1500.0 + Math.random2f(0.0, 1000.0) => bassFiltTarget;
+                900.0 + Math.random2f(0.0, 500.0) => bassFiltTarget;
             } else {
-                600.0 + Math.random2f(0.0, 600.0) => bassFiltTarget;
+                450.0 + Math.random2f(0.0, 350.0) => bassFiltTarget;
             }
+            bassFiltTarget => bassF.freq; // pluck: filter starts open, decays
+            0.8 + 0.2 * (s == 2 || s == 10) => float bv;
+            0.30 * bv => bassG.gain;
+            bassEnv.keyOn();
         }
     }
 
     // ---- PAD (follows arrangement + phrase dynamics) ----
     if(transition != 4 && s == 0 && arrLevel >= 2) {
-        chordRoot => int pRoot;
-        chordRoot + 2 => int pDeg2;
-        chordRoot + 4 => int pDeg3;
+        chordShift(chordRoot) => int pRoot;
+        pRoot + 2 => int pDeg2;
+        pRoot + 4 => int pDeg3;
         Std.mtof(note(pRoot, 4)) => padOsc1.freq;
         Std.mtof(note(pDeg2, 4)) => padOsc2.freq;
         Std.mtof(note(pDeg3, 4)) => padOsc3.freq;
+        padOsc1.freq() * 1.0025 => padOsc4.freq;
+        padOsc3.freq() * 0.9975 => padOsc5.freq;
         padOsc1.freq() * 0.998 => padOsc1.freq;
         padOsc3.freq() * 1.002 => padOsc3.freq;
         // Pad dynamics follow phrase position: swell bars 1-3, pull back bar 4
@@ -813,6 +885,7 @@ while(true) {
         else if(barInChord == 2) 0.08 => padGainTarget;  // bar 3: peak
         else 0.03 => padGainTarget;                       // bar 4: pull back
         if(energy >= 3) padGainTarget * 1.3 => padGainTarget;
+        padGainTarget * 1.6 => padGainTarget; // pad sat ~19 dB under the kick; bring it up
         600.0 + barInChord * 150.0 => padFiltTarget;     // filter opens through phrase
     } else if(arrLevel < 2) {
         0.0 => padGainTarget;
@@ -823,16 +896,19 @@ while(true) {
         motif[phraseStep % PHRASE_LEN] => int deg;
         // Motif variation per repetition
         phraseBar / 4 => int motifRep;
-        if(motifRep == 1 && (seed + phraseStep) % 5 == 0) -1 => deg;
-        if(motifRep == 3 && deg >= 0 && phraseStep % 8 == 6) deg - 1 => deg;
-        if(deg >= 0) {
-            (deg + chordRoot) % 5 => deg;
-            if(deg < 0) deg + 5 => deg;
-            4 => int ldOct;
-            if(energy >= 3 && phraseStep >= 32) 5 => ldOct;
-            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) 5 => ldOct;
-            Std.mtof(note(deg, ldOct)) => ldOsc1.freq;
+        // never drop the final resolution note (phrase step 60)
+        if(motifRep == 1 && (seed + phraseStep) % 5 == 0 && phraseStep < 60) REST => deg;
+        if(motifRep == 3 && deg != REST && phraseStep % 8 == 6) deg - 1 => deg;
+        if(deg != REST) {
+            deg + chordShift(chordRoot) => deg;
+            5 => int ldOct;
+            if(motifRep == 2 && phraseStep >= 32 && phraseStep < 48) 6 => ldOct;
+            note(deg, ldOct) => int ldMidi;
+            while(ldMidi > 84) ldMidi - 12 => ldMidi;
+            while(ldMidi < 55) ldMidi + 12 => ldMidi;
+            Std.mtof(ldMidi) => ldOsc1.freq;
             ldOsc1.freq() * 2.0 => ldOsc2.freq;
+            ldOsc1.freq() * (1.003 + 0.001 * ldDrift.last()) => ldOsc3.freq;
             phraseStep % 16 => int localStep;
             0.04 => float ldVel;
             if(localStep % 4 == 0) 0.09 => ldVel;
@@ -850,7 +926,10 @@ while(true) {
             } else {
                 1800.0 + localStep * 80.0 => ldFiltTarget; // staircase — opens through the bar
             }
-            ldVel => ldAmpTarget;
+            ldVel * 2.6 => ldAmpTarget;
+            ldEnv.keyOn();
+        } else if(phraseStep % 2 == 0) {
+            ldEnv.keyOff(); // rests are rests: let the delay fill them
         }
     } else if(arrLevel < 3) {
         0.0 => ldAmpTarget;
@@ -877,7 +956,7 @@ while(true) {
         if(kickOsc.gain() > 0.005) {
             38.0 + 80.0 * Math.exp(-kickPh * 8.0) => kickOsc.freq;
             kickOsc.freq() * 4.0 => kickLPF.freq;
-            kickOsc.gain() * 0.95 => kickOsc.gain;
+            kickOsc.gain() * 0.91 => kickOsc.gain;
             kickPh + 0.08 => kickPh;
         } else {
             0.0 => kickOsc.gain;
@@ -895,18 +974,16 @@ while(true) {
         // Riser filter smooth
         riserBP.freq() + (riserFreqTarget - riserBP.freq()) * 0.05 => riserBP.freq;
 
-        // Bass filter slide + decay
-        bassF.freq() + (bassFiltTarget - bassF.freq()) * 0.12 => bassF.freq;
-        if(bassFiltTarget > 220.0) bassFiltTarget * 0.994 => bassFiltTarget;
+        // Bass filter: pluck decay toward a dark floor
+        if(bassF.freq() > 160.0) bassF.freq() * 0.93 => bassF.freq;
 
         // Lead filter — gentle movement, sine doesn't need aggressive sweep
         ldF.freq() + (ldFiltTarget - ldF.freq()) * 0.03 => ldF.freq;
         if(ldFiltTarget > 1200.0) ldFiltTarget * 0.999 => ldFiltTarget;
 
         // Lead amplitude envelope — slower attack/release for sine tone
-        ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.05 => ldAmpCurrent;
+        ldAmpCurrent + (ldAmpTarget - ldAmpCurrent) * 0.3 => ldAmpCurrent;
         ldAmpCurrent => ldDry.gain;
-        if(ldAmpTarget > 0.01) ldAmpTarget * 0.988 => ldAmpTarget;
 
         // Pad filter sweep with LFO modulation
         0.002 => float padLfoRate;
