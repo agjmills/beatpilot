@@ -9,7 +9,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SAMPLES_DIR="$SCRIPT_DIR/samples"
-TMP_DIR="/tmp/beatpilot-samples-$$"
+TMP_DIR="$(mktemp -d)"; rmdir "$TMP_DIR"   # git clone wants to create it
 
 # Check for ffmpeg (needed to convert FLAC → WAV)
 if ! command -v ffmpeg &>/dev/null; then
@@ -131,8 +131,8 @@ convert "$VD/oh/ride/oh_ride_ride_vl1_rr1.flac"                      "$SAMPLES_D
 # ============ PIANO (Salamander Grand Piano V3 — CC0 by Alexander Holm) ============
 echo "  piano (Salamander Grand Piano — ~74MB download)..."
 mkdir -p "$SAMPLES_DIR/piano"
-PIANO_TMP="/tmp/beatpilot-piano-$$"
-mkdir -p "$PIANO_TMP"
+PIANO_TMP="$(mktemp -d)"
+
 PIANO_URL="https://archive.org/download/SalamanderGrandPianoV3/SalamanderGrandPianoV3_OggVorbis.tar.bz2"
 if curl -fsSL "$PIANO_URL" -o "$PIANO_TMP/piano.tar.bz2"; then
     tar -xjf "$PIANO_TMP/piano.tar.bz2" -C "$PIANO_TMP" 2>/dev/null || true

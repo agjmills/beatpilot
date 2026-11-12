@@ -1,18 +1,15 @@
 #!/bin/bash
 # Switch Beatpilot genre
 SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
-GENRE_FILE="/tmp/beatpilot-genre"
-GENRES_DIR="${SCRIPT_DIR}/genres"
+# shellcheck source=lib/paths.sh
+. "$SCRIPT_DIR/lib/paths.sh" || exit 1
 
 genre="$1"
 
-# List available genres if no argument
 if [ -z "$genre" ]; then
-    current="techno"
-    [ -f "$GENRE_FILE" ] && current=$(cat "$GENRE_FILE")
+    current=$(bp_genre)
     echo "Available vibes:"
-    for f in "${GENRES_DIR}"/*.ck; do
-        name=$(basename "$f" .ck)
+    for name in $BEATPILOT_GENRES; do
         if [ "$name" = "$current" ]; then
             echo "  * ${name} (active)"
         else
@@ -22,15 +19,13 @@ if [ -z "$genre" ]; then
     exit 0
 fi
 
-# Check genre exists
-if [ ! -f "${GENRES_DIR}/${genre}.ck" ]; then
+if ! bp_valid_genre "$genre" || [ ! -f "${SCRIPT_DIR}/genres/${genre}.ck" ]; then
     echo "Unknown vibe: ${genre}"
-    echo "Available: $(ls "${GENRES_DIR}"/*.ck 2>/dev/null | xargs -I{} basename {} .ck | tr '\n' ' ')"
+    echo "Available: ${BEATPILOT_GENRES}"
     exit 1
 fi
 
-# Write genre and restart
-echo "$genre" > "$GENRE_FILE"
+echo "$genre" > "$BP_GENRE"
 "${SCRIPT_DIR}/stop.sh" >/dev/null 2>&1
-rm -f /tmp/beatpilot-disabled
+rm -f "$BP_DISABLED"
 "${SCRIPT_DIR}/start.sh"

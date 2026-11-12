@@ -1,17 +1,15 @@
 #!/bin/bash
 # Toggle Beatpilot on/off
 SCRIPT_DIR="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
-PID_FILE="/tmp/beatpilot.pid"
-DISABLED_FILE="/tmp/beatpilot-disabled"
+# shellcheck source=lib/paths.sh
+. "$SCRIPT_DIR/lib/paths.sh" || exit 1
 
-if [ -f "$DISABLED_FILE" ]; then
-    # Currently disabled — enable and start
-    rm -f "$DISABLED_FILE"
+if [ -f "$BP_DISABLED" ]; then
+    rm -f "$BP_DISABLED"
     "${SCRIPT_DIR}/start.sh"
     echo "Beatpilot: ON"
 else
-    # Currently enabled — stop and disable
     "${SCRIPT_DIR}/stop.sh" >/dev/null 2>&1
-    touch "$DISABLED_FILE"
+    touch "$BP_DISABLED"
     echo "Beatpilot: OFF"
 fi

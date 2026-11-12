@@ -49,13 +49,22 @@ HOOKS_JSON=$(cat <<EOF
 EOF
 )
 
-# Merge hooks into existing settings
-jq --argjson newhooks "$HOOKS_JSON" '.hooks = (.hooks // {}) + $newhooks' "$SETTINGS" > "${SETTINGS}.tmp"
+# Back up, then append our hook to each event without touching anything
+# already there. Re-running is a no-op: entries pointing at hook.sh are skipped.
+cp "$SETTINGS" "${SETTINGS}.beatpilot.bak"
+jq --argjson newhooks "$HOOKS_JSON" --arg cmd "$HOOK_CMD" '
+  .hooks = (.hooks // {}) |
+  reduce ($newhooks | to_entries[]) as $e (.;
+    if ((.hooks[$e.key] // []) | map(.hooks[]?.command) | index($cmd)) then .
+    else .hooks[$e.key] = ((.hooks[$e.key] // []) + $e.value) end)
+' "$SETTINGS" > "${SETTINGS}.tmp"
 mv -f "${SETTINGS}.tmp" "$SETTINGS"
 
-chmod +x "${SCRIPT_DIR}/hook.sh" "${SCRIPT_DIR}/start.sh" "${SCRIPT_DIR}/stop.sh" "${SCRIPT_DIR}/toggle.sh"
+chmod +x "${SCRIPT_DIR}"/*.sh "${SCRIPT_DIR}"/adapters/*.sh "${SCRIPT_DIR}"/bin/*.sh
 
-echo "Hooks installed to ${SETTINGS}"
+echo "Hooks installed to ${SETTINGS} (backup: ${SETTINGS}.beatpilot.bak)"
+echo "Note: the Claude Code plugin brings its own hooks. Use one or the other,"
+echo "      not both, or every event fires twice."
 echo ""
 echo "Usage:"
 echo "  Start a new Claude session — music plays automatically."

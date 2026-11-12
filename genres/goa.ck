@@ -1,7 +1,21 @@
 // engine.ck - Beatpilot Goa Trance Engine
 // Driving 4/4 kick, rolling acid bass, eastern modes (phrygian/hijaz/harmonic minor),
 // psychedelic FM lead drenched in delay, off-beat open hats — classic goa.
-// Reads state from /tmp/beatpilot-state.
+// Reads state from <run dir>/state (see lib/paths.sh), written by the adapters or the mod.
+
+// ---- Runtime paths: `chuck genre.ck:<run dir>`; legacy /tmp without one ----
+string statePath; string volumePath; string nowPath;
+if(me.args() > 0) {
+    me.arg(0) + "/state" => statePath;
+    me.arg(0) + "/volume" => volumePath;
+    me.arg(0) + "/now" => nowPath;
+} else {
+    "/tmp/beatpilot-state" => statePath;
+    "/tmp/beatpilot-volume" => volumePath;
+    "" => nowPath;
+}
+-1 => int musicSig; // key/scale/seed currently applied (-1 = none yet)
+
 
 // ============ SAMPLE DETECTION ============
 me.dir() + "/../samples/goa/" => string smpDir;
@@ -353,7 +367,7 @@ SinOsc impactOsc => Gain impactG => master;
 // ============ STATE FILE READER ============
 fun void readState() {
     FileIO f;
-    if(f.open("/tmp/beatpilot-state", FileIO.READ)) {
+    if(f.open(statePath, FileIO.READ)) {
         Std.atoi(f.readLine()) => int newEnergy;
         Std.atoi(f.readLine()) => int newKey;
         Std.atoi(f.readLine()) => int newScale;
@@ -361,19 +375,28 @@ fun void readState() {
         Std.atoi(f.readLine()) => int newTs;
         f.close();
 
+        // A new tune waits for the phrase boundary (bar 15 -> 0) so phrases
+        // finish; from silence, or the first time, it applies at once.
+        newKey * 1000000 + newScale * 1000 + (newSeed % 1000) => int newSig;
+        if(newTs > 0 && newSig != musicSig &&
+           (musicSig < 0 || phraseBar == 15 || masterTarget < 0.01)) {
+            newSig => musicSig;
+            Math.srandom(newSeed * 7919 + newKey * 31 + newScale + 1);
+        newKey % 12 => key;
+        newScale % 4 => scaleType;
+        newSeed % 256 => seed;
+        newSeed % 2 => variant;
+        seed % progs.cap() => progIdx;
+        -1 => phraseBar; // the advance below lands it on bar 0
+        0 => chordIdx;
+        0 => phraseRepeat;
+        for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
+        progs[progIdx][0] => chordRoot;
+        generateMotif();
+        }
+
         if(newTs != lastEventTs && newTs > 0) {
             newTs => lastEventTs;
-            newKey % 12 => key;
-            newScale % 4 => scaleType;
-            newSeed % 256 => seed;
-            newSeed % 2 => variant;
-            seed % progs.cap() => progIdx;
-            0 => phraseBar;
-            0 => chordIdx;
-            0 => phraseRepeat;
-            for(0 => int ci; ci < 4; ci++) -1 => chordSub[ci];
-            progs[progIdx][0] => chordRoot;
-            generateMotif();
 
             if(transition == 0 && energy >= 1) {
                 if(newEnergy >= 3 && energy < 3) {
@@ -425,13 +448,56 @@ fun void readState() {
 }
 
 // ============ MAIN SEQUENCER ============
+// ============ NOW PLAYING (read by the Claude Code mod) ============
+fun void writeNow() {
+    if(nowPath == "") return;
+    FileIO nf;
+    if(!nf.open(nowPath, FileIO.WRITE)) return;
+    "" => string sc;
+    for(0 => int i; i < scales[scaleType].cap(); i++) {
+        if(i > 0) "," +=> sc;
+        scales[scaleType][i] + "" +=> sc;
+    }
+    "" => string pr;
+    for(0 => int i; i < progs[progIdx].cap(); i++) {
+        if(i > 0) "," +=> pr;
+        progs[progIdx][i] + "" +=> pr;
+    }
+    0 => int lvl;
+    if(phraseBar >= 0 && phraseBar < 16) arrangement[phraseBar] => lvl;
+    0 => int on;
+    if(masterTarget > 0.01) 1 => on;
+    "" => string ar;
+    for(0 => int i; i < 16; i++) {
+        if(i > 0) "," +=> ar;
+        arrangement[i] + "" +=> ar;
+    }
+    nf.write("genre goa\n");
+    nf.write("bpm " + (BPM $ int) + "\n");
+    nf.write("tick " + stepCount + "\n");
+    nf.write("energy " + energy + "\n");
+    nf.write("key " + key + "\n");
+    nf.write("seed " + seed + "\n");
+    nf.write("scale " + sc + "\n");
+    nf.write("prog " + pr + "\n");
+    nf.write("chord " + chordIdx + "\n");
+    nf.write("bar " + phraseBar + "\n");
+    nf.write("level " + lvl + "\n");
+    nf.write("arr " + ar + "\n");
+    nf.write("playing " + on + "\n");
+    nf.write("volume " + ((volume * 100.0) $ int) + "\n");
+    nf.write("end\n");
+    nf.close();
+}
+
 while(true) {
     stepCount % 16 => int s;
+    if(s == 1) writeNow(); // after the bar boundary settled
 
     if(s == 0) {
         readState();
         FileIO vf;
-        if(vf.open("/tmp/beatpilot-volume", FileIO.READ)) {
+        if(vf.open(volumePath, FileIO.READ)) {
             Std.atoi(vf.readLine()) => int vol;
             vf.close();
             if(vol >= 0 && vol <= 100) vol / 100.0 => volume;

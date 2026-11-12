@@ -10,10 +10,12 @@
 # Uses fswatch if available, falls back to polling with find.
 
 ADAPTER_DIR="$(cd "$(dirname "$0")" && pwd)"
-WATCHER_PID="/tmp/beatpilot-watcher.pid"
+# shellcheck source=../lib/paths.sh
+. "$ADAPTER_DIR/../lib/paths.sh" || exit 1
+WATCHER_PID="$BEATPILOT_RUN/watcher.pid"
 POLL_INTERVAL=3       # seconds between polls (fallback mode)
-MARKER="/tmp/beatpilot-watcher-mark"
-EVENT_LOG="/tmp/beatpilot-watcher-events"
+MARKER="$BEATPILOT_RUN/watcher-mark"
+EVENT_LOG="$BEATPILOT_RUN/watcher-events"
 
 # --- Stop mode ---
 if [ "$1" = "--stop" ] || [ "$1" = "stop" ]; then
@@ -61,7 +63,6 @@ calc_energy() {
 
 # --- Process a file change ---
 process_change() {
-    local file="$1"
     date +%s >> "$EVENT_LOG"
     # Trim event log to last 20 lines
     if [ -f "$EVENT_LOG" ]; then
@@ -69,7 +70,8 @@ process_change() {
     fi
     local energy
     energy=$(calc_energy)
-    "${ADAPTER_DIR}/write-state.sh" "$energy" "$file" 2>/dev/null
+    # One tune per project (set at start); file changes only move the energy.
+    "${ADAPTER_DIR}/write-state.sh" "$energy" --keep 2>/dev/null
 }
 
 # --- Cleanup on exit ---
@@ -79,6 +81,8 @@ cleanup() {
 }
 
 # --- Launch watcher in background ---
+# The project's tune: hashed from its path, once.
+"${ADAPTER_DIR}/write-state.sh" 1 "$WATCH_DIR" 2>/dev/null
 touch "$MARKER"
 : > "$EVENT_LOG"
 

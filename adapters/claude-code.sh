@@ -1,66 +1,57 @@
 #!/bin/bash
-# Beatpilot adapter for Claude Code
-# Receives hook JSON on stdin, maps events to energy + content, calls write-state.sh
-# Registered as a Claude Code hook via settings.json.
+# Beatpilot adapter for Claude Code (shell hooks; used by ./install.sh).
+# The plugin install uses the in-process mod in hooks/ instead.
+# Receives hook JSON on stdin, maps events to energy, calls write-state.sh.
 
 ADAPTER_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../lib/paths.sh
+. "$ADAPTER_DIR/../lib/paths.sh" || { cat >/dev/null; exit 0; }
 
-# --- Check if disabled ---
-[ -f /tmp/beatpilot-disabled ] && cat > /dev/null && exit 0
+[ -f "$BP_DISABLED" ] && cat > /dev/null && exit 0
 
-# --- Dependency check (jq required for JSON parsing) ---
 if ! command -v jq &>/dev/null; then
     cat > /dev/null
     echo '{"systemMessage":"Beatpilot: jq is not installed. Install it with: brew install jq (macOS) or sudo apt install jq (Linux)."}'
     exit 0
 fi
 
-# --- Read JSON from stdin ---
 input=$(cat)
-
-# --- Parse event type ---
-event=$(echo "$input" | jq -r '.hook_event_name // empty' 2>/dev/null)
+event=$(printf '%s' "$input" | jq -r '.hook_event_name // empty' 2>/dev/null)
 [ -z "$event" ] && exit 0
 
-# --- Determine energy level and content to hash ---
-energy=1
-content=""
+current_energy() {
+    local e=2
+    [ -f "$BP_STATE" ] && read -r e < "$BP_STATE"
+    case "$e" in ''|*[!0-9]*) e=2 ;; esac
+    echo "$e"
+}
 
 case "$event" in
     UserPromptSubmit)
-        energy=2
-        content=$(echo "$input" | jq -r '.prompt // empty' 2>/dev/null)
+        # A new task: new tune. Content goes over stdin, not argv.
+        printf '%s' "$input" | jq -r '.prompt // "prompt"' | "${ADAPTER_DIR}/write-state.sh" 2 -
         ;;
     PreToolUse)
-        tool=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null)
-        content="${tool}:$(echo "$input" | jq -r '.tool_input | tostring' 2>/dev/null)"
+        tool=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)
         case "$tool" in
-            Agent)  energy=3 ;;
-            *)      energy=2 ;;
+            Agent|Task) "${ADAPTER_DIR}/write-state.sh" 3 --keep ;;
+            *)          "${ADAPTER_DIR}/write-state.sh" 2 --keep ;;
         esac
         ;;
     PostToolUse)
-        energy=2
-        content=$(echo "$input" | jq -r '.tool_name // empty' 2>/dev/null)
+        "${ADAPTER_DIR}/write-state.sh" "$(current_energy)" --keep
         ;;
     PostToolUseFailure)
-        energy=0
-        content=$(echo "$input" | jq -r '.error // empty' 2>/dev/null)
+        # Failures are routine for an agent: tension (one level down), not silence.
+        e=$(current_energy)
+        [ "$e" -gt 1 ] && e=$(( e - 1 ))
+        "${ADAPTER_DIR}/write-state.sh" "$e" --keep
         ;;
     Stop)
-        energy=1
-        content="stop"
+        "${ADAPTER_DIR}/write-state.sh" 1 --keep
         ;;
     SubagentStart)
-        energy=3
-        content=$(echo "$input" | jq -r '.agent_type // empty' 2>/dev/null)
-        ;;
-    *)
-        exit 0
+        "${ADAPTER_DIR}/write-state.sh" 3 --keep
         ;;
 esac
-
-[ -z "$content" ] && content="$event"
-
-# --- Delegate to shared state writer ---
-"${ADAPTER_DIR}/write-state.sh" "$energy" "$content"
+exit 0
