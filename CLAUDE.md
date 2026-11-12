@@ -9,19 +9,31 @@ Raw SinOsc/TriOsc/SawOsc sound like test tones. Every melodic/harmonic voice nee
 - **Detuned pairs** (±0.2-0.3%) for width and warmth
 - **Slow pitch drift LFO** on one of the pair (rate ~0.0001) so the sound lives and breathes
 - **Filter with movement** — LFO or envelope, never static. Even a gentle sweep transforms a tone.
+- **An amplitude envelope on every note** (ADSR/Envelope with a real attack and release). Smoothing a gain target toward a level is not an envelope: it turns a melody into one sustained tone sliding between pitches.
 
 ### 2. Everything needs space
 Dry signals sound like a phone off the hook. Every engine must include:
 - **Multi-tap delay reverb** (4 taps, prime-ratio delay times, cross-fed with feedback + LP darkening)
 - Typical settings: feedback 0.3-0.45, LP cutoff 1500-3000Hz depending on genre brightness
 - **Lead delay** — dotted-eighth or quarter-note feedback delay. Sparse melodies rely on delay to fill space.
+- **Tap the wet signal outside the feedback loop.** `in => DelayL d => Gain fb => d` with the output taken from `d`, and a separate wet gain into the mix. Putting a small wet gain inside the loop multiplies it into every echo: several engines had echoes 30-70 dB down, which is the same as no delay. Aim for the first echo within ~6-10 dB of the dry note.
+- **High-pass the reverb send (~200-250 Hz).** Kick and sub in the reverb is mud.
 
 ### 3. Chord progressions, not random chords
 Never `Math.random2()` for chord roots. Every engine needs:
 - A `progs[][]` array of 4-chord progressions (at least 4 progressions, mix of warm and dark)
 - Seed selects which progression — same seed = same harmony
-- 16-bar phrase: each chord lasts 4 bars
+- 16-bar phrase: each chord lasts 4 bars (at slow tempos that is too static; piano changes chord every bar)
 - **All harmonic elements follow the progression**: bass, pad, lead, stab — all offset by `chordRoot`
+
+### 3b. Degrees, chords and rests: the bugs every engine had
+Most engines produced wrong notes for the same few reasons. These rules are not optional:
+- **Chords come from a 7-note scale.** Stacking every other degree of a 5-note scale does not make a chord (you get shapes like root–tritone–major 7th, or 4 of the 5 scale notes at once). If the melody uses a pentatonic, build the harmony from its 7-note parent mode (pentatonic major → major, pentatonic minor → aeolian/dorian) and keep chord roots on notes the melody can use.
+- **Every chord is a real chord.** Check each progression in each scale the engine can pick: major or minor triads (plus 7ths/9ths where the genre wants them). No accidental diminished or augmented chords. In harmonic minor use the raised 7th only over V and vii.
+- **Voice-lead between chords.** Pick the inversion closest to the previous voicing (target ≲ 7 semitones of total movement per change). Root-position blocks jumping in parallel sound amateur.
+- **Negative degrees are real notes.** Convert with floor division: `octave = floorDiv(deg, len)`, `pc = deg - octave * len`. Never `% len`: it folds the melody into one octave and turns "a step below" into "a 6th above".
+- **The rest marker is never `-1`.** Cell maths (approach note `cellDeg[0] - 1`, inversions, leaps of -1/-2) produces -1 all the time; using it as "rest" silently deletes those notes. Use a sentinel like `-99 => int REST`.
+- **Transpose phrases as a whole** by the chord's offset (nearest octave of the chord root), not note by note with a wrap.
 
 ### 4. Lead motif, not random notes
 The lead must play a **repeating phrase**, not dice-roll notes each step:
@@ -42,6 +54,8 @@ The lead must play a **repeating phrase**, not dice-roll notes each step:
 - The approach note in bar 3 (`cellDeg[0] - 1`) gives it a "someone who knows what they're doing" feel
 - Repetition is what makes it sound composed. The listener hears the cell, recognizes it varied, and that's musicality.
 - Different genres use different **cell rhythm spacing**: lofi = wide (0,4,6 or 0,6,8), techno = tight (0,2,4), DnB = spacious (0,6,12)
+- **Notes on strong beats are chord tones** (snap the cell note to the nearest chord tone when it lands on beat 1 or 3 or is held). Non-chord tones are short and stepwise (≤ 2 semitones), never a held semitone against the pad.
+- Reject degenerate cells (all the same note, or a neighbour wobble whose retrograde is identical): they make the variations inaudible.
 
 ### 5. Swing
 Straight 16ths sound robotic. Every engine needs swing:
@@ -87,25 +101,30 @@ The bass line must share DNA with the lead — both come from the same cell. Fix
 - Bass plays **root on strong beats**, cell interval as **passing tone** on off-beats
 - Bar 2 bass follows the same variation type as the lead (transpose/invert/retrograde)
 - Bar 3 bass gets busier (mirrors lead development)
-- Bar 4 bass simplifies — just roots, resolving
+- Bar 4 bass simplifies — just roots, resolving (a walk-up into the next chord's root works well)
+- **Bass is audible and has space**: fundamental roughly 40-120 Hz (about MIDI 28-47), a note envelope, and gaps. A sine at 16-30 Hz is inaudible on most speakers; an unenveloped bass is a drone.
+- **Bass and kick don't fight**: in four-on-the-floor genres the bass avoids kick steps (offbeat techno bass, the goa kick-bass roll) or ducks under the kick.
 - The listener hears bass and lead as parts of the same piece because they share the same intervals
 
 ### 9. Arrangement mask — not everything plays all the time
 A track where every layer loops from bar 1 sounds like a tech demo. Real music has **structure** — layers enter, exit, and interact across the phrase.
 - Generate an `arrangement[16]` array in `generateMotif()` — one entry per bar of the 16-bar phrase
 - Levels: `0` = minimal, `1` = bass, `2` = bass + pad/keys, `3` = bass + pad + lead
+- **Templates move in 4-bar blocks aligned with the motif** (bars 0, 4, 8, 12), so a lead section always starts at motif bar 1. A window like bars 2-3 only plays the second half of the motif and the listener never hears the cell itself.
 - Seed selects from arrangement templates:
-  - **Build**: bass only → +pad → +lead → strip back (1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,1,1)
-  - **Call-response**: lead bars alternate with bass-only (1,1,3,3, 1,1,3,3, 2,2,3,3, 3,3,2,1)
-  - **Full-then-strip**: everything up front, then layers drop (2,2,3,3, 3,3,3,3, 2,2,2,2, 1,1,2,2)
+  - **Build**: bass only → +pad → +lead → strip back (1,1,1,1, 2,2,2,2, 3,3,3,3, 2,2,2,2)
+  - **Call-response**: lead blocks alternate with bass-only blocks (1,1,1,1, 3,3,3,3, 2,2,2,2, 3,3,3,3)
+  - **Full-then-strip**: everything up front, then layers drop (3,3,3,3, 3,3,3,3, 2,2,2,2, 1,1,2,2)
+- **Rotate the template per pass**: `(seed + phraseRepeat) % templates`, so successive 16-bar passes differ
 - In the sequencer, read `arrangement[phraseBar]` and only trigger layers at or above the current level
 - When a layer is gated off, fade its target to 0 — don't hard-cut
 
 ### 10. Pad/keys dynamics follow the phrase
 Static pad = lifeless drone. The pad should breathe with the harmonic rhythm:
-- Bars 1-2 of each chord: gentle (0.03-0.04 gain target)
-- Bar 3: peak (0.07-0.08) — this is where the phrase builds
-- Bar 4: pull back (0.02-0.03) — creates space before the next chord
+- Bars 1-2 of each chord: gentle (≈ 1× the layer's base level)
+- Bar 3: peak (≈ 2×) — this is where the phrase builds
+- Bar 4: pull back (≈ 0.7×) — creates space before the next chord
+- These are ratios, not absolute gains: what a given gain sounds like depends on the oscillators behind it. Set the base level by measuring the layer against the kick (see "Verifying without listening").
 - Filter should open progressively through the 4-bar chord cycle
 - At energy 3, multiply gain targets by ~1.3 for more presence
 
@@ -124,8 +143,9 @@ FM mod ratios: 2:1 = warm/Rhodes, 3:2 = glassy/bell, 5:3 = metallic, 1:1 = brigh
 Don't limit to just pentatonics. Include:
 - **Warm**: pentatonic major, pentatonic minor, major 7, lydian
 - **Dark**: harmonic minor (raised 7th = cinematic), phrygian (flat 2 = dread), natural minor
-- **Tension**: whole-half diminished, chromatic clusters
+- **Tension**: whole-half diminished, chromatic clusters — as colour for a passage, never as the scale for a whole track (minutes of diminished triads)
 - Let seed/mood determine which pool to draw from
+- Avoid incomplete "scales" like `[0,2,4,5,7]` (no 6th or 7th, a semitone at the top): they clash far more than a real mode and give no usable chords
 
 ### 14. Occasional FX for tension and release
 A track that never changes its effects sounds static. Occasional FX moments give it the dynamics of a DJ turning knobs:
@@ -136,20 +156,24 @@ A track that never changes its effects sounds static. Occasional FX moments give
   2. **Reverb wash**: Boosts reverb mix gain and feedback. Everything gets spacious and washy. Reverb returns to base values via smooth decay when FX ends.
   3. **Third FX** (genre-specific): Delay feedback swell (lofi/DnB/techno), dub delay throw swell (dub), or shimmer boost (ambient).
 - **Release**: When the FX ends, parameters don't snap back — they smooth-decay toward base values (0.95 * current + 0.05 * base per bar for reverb/delay, substep smoothing for HPF).
+- **Filter changes always glide.** Set a target and move the cutoff toward it every substep; jumping the HPF once per bar caused full-scale clipping in DnB.
+- **Gain staging**: master peak at or below about -3 dBFS in every energy level and FX. A `Dyno` limiter after `fxHPF` is a reasonable safety net, not a substitute for sane levels.
 - **Signal chain**: All engines route through `Gain masterOut => HPF fxHPF => dac` with the HPF normally at 20Hz (transparent). Both dry and reverb outputs feed `masterOut`.
 
 ### 15. Motif variation across repetitions
 The same 4-bar motif repeating identically sounds like a loop, not a performance. Each repetition within the 16-bar phrase gets subtle changes:
 - **Rep 0** (bars 0-3): Play motif as written — establish the idea
-- **Rep 1** (bars 4-7): Drop one note (`(seed + phraseStep) % 5 == 0` → set deg to -1) — creates a "question" feel
-- **Rep 2** (bars 8-11): Octave jump on bar 3 peak notes — intensification
+- **Rep 1** (bars 4-7): Drop one note (`(seed + phraseStep) % 5 == 0` → set deg to `REST`) — creates a "question" feel. Never drop the final resolution note.
+- **Rep 2** (bars 8-11): Octave jump on the bar 3 peak note only — jumping every bar-3 note gives 14-15 semitone leaps
 - **Rep 3** (bars 12-15): Approach note from below on selected steps (`deg - 1`) — resolution with ornamentation
 - Applied in the lead playback section, not in `generateMotif()` — the motif array stays clean, variations are applied on read
+- Make the choice of dropped/ornamented notes depend on `phraseRepeat` too, so each 16-bar pass is not identical to the last
 
 ### 16. Chord substitutions
 Repeating the same 4 chords forever becomes wallpaper. Every 3rd cycle of the 16-bar phrase (`phraseRepeat % 3 == 2`), substitute one chord:
 - `(seed * 13 + phraseRepeat) % 4` picks which chord to replace
 - Genre-specific substitution flavor: lofi = up a 3rd (jazz tritone-ish), techno = up 2 degrees (modal interchange), DnB = up 1 degree (chromatic approach), dub = up 3 degrees (up a 4th), ambient = up 5 degrees (deceptive resolution)
+- Degree offsets assume a 7-note harmony scale (see 3b); on a 5-note scale "up 5" is the same chord an octave up. The result must be a real chord: skip the substitution if it lands on a diminished or augmented one.
 - Applied via `chordSub[4]` array (-1 = no sub) checked after reading `progs[progIdx][chordIdx]`
 - Reset on new state events and at each phrase boundary
 
@@ -158,7 +182,7 @@ Static drum patterns are the #1 giveaway of machine-generated music. Add seed-de
 - `(seed + phraseBar * 7) % 8` gives a variation value per bar
 - Low values: add a ghost hat on an empty step; high values: add a ghost snare
 - Only at energy >= 2 (don't vary minimal patterns)
-- Genre-specific step positions: lofi = steps 5/11, techno = steps 3/7, DnB = steps 7/9, dub = steps 5/9
+- Genre-specific step positions: lofi = steps 5/11, techno = steps 3/7, DnB = steps 7/9, dub = steps 5/9; goa and reggae: choose steps that avoid the kick and the skank
 - Ambient has no drums, so no variation needed
 
 ### 18. Per-note velocity humanization
@@ -173,6 +197,25 @@ A fixed LFO rate makes pads sound like static drones. Tie the rate to arrangemen
 - × 1.4-1.5 when `arrLevel >= 3` (full arrangement = faster modulation)
 - × 1.3 at bar 3 of each chord (`phraseBar % 4 == 2` = peak moment)
 - × 0.7 at bars 12-15 (`phraseBar >= 12` = phrase end, calmer)
+
+### 20. Genre exceptions
+The principles above are written for groove genres. Where they don't fit:
+- **Piano** (solo): no swing, drum fills, FX sweeps or intro HPF (7, 7b, 14, 17 don't apply). One chord per bar at 60 BPM; detune ~2 cents, not ±0.3% (that sounds honky-tonk); damp sounding notes at chord changes like a sustain pedal; left-hand pattern changes with energy.
+- **Ambient**: no drums. The reverb needs a long tail (RT60 several seconds), outside the 0.3-0.45 feedback range of principle 2. Drones and pads must retune with the chord quickly enough to arrive (a glide that takes longer than the chord is permanently out of tune).
+
+### 21. ChucK gotchas
+- A function that reads a global declared **later** in the file compiles fine and crashes at runtime. Declare globals before any function that uses them.
+- `/` on ints is integer division and `%` keeps the sign of the dividend: write a `floorDiv` helper for degree maths (3b).
+- `--silent` runs faster than real time: good for analysis, but time-based behaviour (decay, idle fade) happens in seconds of wall time.
+
+### 22. Verifying without listening
+Ears are the final test, but most of the bugs above are measurable. Log every note event from a copy of the engine (bar, step, instrument, MIDI note, velocity, chord root) and render stems with `dac => WvOut2 w => blackhole` running alongside under `--silent`. Check, across several seeds and every scale:
+- Strong-beat lead and bass notes on chord tones: ≥ 85%
+- Held semitone/tritone clashes between layers: < 10%
+- Melodic leaps wider than a 5th: < 15%
+- Distinct 4-bar lead windows over 5 minutes: more than a handful (not 1-2), but the cell still recognisable
+- Each layer audible: nothing important more than ~25 dB below the kick; bass energy not concentrated below 40 Hz
+- Master peak ≤ -3 dBFS, no clipped samples
 
 ### 13. State file interface
 Engines are started as `chuck genres/<genre>.ck:<run dir>` (see `lib/paths.sh`; without the argument they fall back to the legacy `/tmp/beatpilot-*` files). They read `<run dir>/state`:
@@ -196,7 +239,7 @@ Each bar (step 1) engines write `<run dir>/now` for the Claude Code player: `gen
 2. Set BPM and swing amount appropriate to genre
 3. Define drum patterns (4 energy levels × 16 steps) + ghost patterns
 4. Define chord progressions (at least 4, mix of moods)
-5. Define scales appropriate to genre
+5. Define scales appropriate to genre, and check every progression in every scale gives real chords (3b)
 6. Build cell-based motif generator (4-bar lead phrase, seed-deterministic)
 7. Build bass line in the same generator, derived from the cell intervals
 8. Build arrangement mask (16 bars, 3 templates based on seed)
@@ -211,7 +254,8 @@ Each bar (step 1) engines write `<run dir>/now` for the Claude Code player: `gen
 17. Add drum micro-variation (seed-deterministic ghost note mutations per bar)
 18. Add per-note velocity humanization (±5% jitter on kicks and hats)
 19. Add dynamic filter LFO rate (faster during builds, slower at phrase end)
-20. Test: does it sound like a composed piece or a tech demo? Check:
+20. Measure it (principle 22): chord tones, clashes, leaps, variety, levels, clipping
+21. Listen: does it sound like a composed piece or a tech demo? Check:
     - Do bass and lead share the same intervals? (principle 8)
     - Do layers come and go, or is everything on from bar 1? (principle 9)
     - Does the pad breathe, or is it a static drone? (principle 10)
