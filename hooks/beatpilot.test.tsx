@@ -81,6 +81,7 @@ function host(on: On) {
   on('process.run', (_, e) => {
     const [cmd, , a, b] = e.argv
     if (cmd === 'bash') return { value: { exitCode: 0, stdout: '/run/bp\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    if (cmd === 'rm' && a !== undefined) files.delete(a)
     if (cmd === 'mv' && a !== undefined && b !== undefined) {
       files.set(b, files.get(a) ?? '')
       files.delete(a)
@@ -174,5 +175,49 @@ test('before any music the player says it is waiting', async ($, on) => {
   await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
   expect(await ui.find({ type: 'Text', text: /Waiting for activity/ })).toBeDefined()
+  await ui.unmount()
+})
+
+const BAND = {
+  plugin: 'beatpilot',
+  component: 'AbovePrompt',
+  props: {
+    hasSurvey: false,
+    isCollapsed: false,
+    isWorking: false,
+    maxRows: 4,
+    bodyColumns: 80,
+    scroll: { offset: 0, bodyRows: 4 },
+    view: {},
+  },
+} as const
+
+test('the play bar pauses and resumes the music, on every surface', async ($, on) => {
+  const { files, clock } = host(on)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  files.set('/run/bp/now', NOW_TEXT)
+  await clock.advance(1100)
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...BAND, surface })
+    expect((await ui.find({ key: 'play-pause' }))?.text).toMatch(/pause/)
+    await ui.press({ key: 'play-pause' })
+    expect(files.has('/run/bp/disabled')).toBe(true)
+    expect((await ui.find({ key: 'play-pause' }))?.text).toMatch(/play/)
+    expect(await ui.find({ type: 'Text', text: /paused/ })).toBeDefined()
+
+    await ui.press({ key: 'play-pause' })
+    expect(files.has('/run/bp/disabled')).toBe(false)
+    await ui.unmount()
+    files.set('/run/bp/now', NOW_TEXT.replace('tick 321', `tick ${400 + surface.length}`))
+    await clock.advance(1100)
+  }
+})
+
+test('the play bar stays out of the way before any music', async ($, on) => {
+  host(on)
+  await $.session.start({ cwd: '/w', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await ui.find({ key: 'play-pause' })).toBeUndefined()
   await ui.unmount()
 })

@@ -1,6 +1,6 @@
 {
   "name": "beatpilot",
-  "description": "Generative music that plays while you code. Eight genres of real-time ChucK synthesis (techno, dnb, lofi, reggae, dub, goa, piano, ambient) with optional CC0 sample blends. Music evolves based on what your AI assistant is doing — prompts, tool calls, agents, and errors shape the key, scale, energy, and melody.",
+  "description": "Generative music that plays while you code. Eight genres of real-time ChucK synthesis (techno, dnb, lofi, reggae, dub, goa, piano, ambient) with optional CC0 sample blends. Music evolves based on what your AI assistant is doing \u2014 prompts, tool calls, agents, and errors shape the key, scale, energy, and melody.",
   "version": "0.4.0",
   "author": {
     "name": "Alex"
@@ -31,9 +31,9 @@
     },
     "band": {
       "type": "boolean",
-      "title": "Phrase meter above the prompt",
-      "description": "A one-line view of the 16-bar phrase above the prompt while music plays",
-      "default": false
+      "title": "Play bar above the prompt",
+      "description": "A one-line bar above the prompt with the 16-bar phrase and a pause/play button",
+      "default": true
     },
     "tunePerPrompt": {
       "type": "boolean",
