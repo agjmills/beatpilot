@@ -1,3 +1,10 @@
+# [0.5.0](https://github.com/agjmills/beatpilot/compare/v0.4.0...v0.5.0) (2026-11-13)
+
+
+### Features
+
+* pause and play from the bar above the prompt ([4f496bc](https://github.com/agjmills/beatpilot/commit/4f496bce91fe32c799bede3ad5e2301f9a26f866))
+
 # [0.4.0](https://github.com/agjmills/beatpilot/compare/v0.3.0...v0.4.0) (2026-11-12)
 
 
