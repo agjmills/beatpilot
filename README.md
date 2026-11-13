@@ -55,7 +55,7 @@ Downloads CC0 drum samples from [Virtuosity Drums](https://github.com/sfzinstrum
 
 That's it. Music starts when you start coding and fades out when you stop.
 
-In Claude Code, run `/beatpilot` to open the player beside the chat: what's playing, the 16-bar phrase as it moves, the chords, which layers are in, and controls for genre, volume, pause and a new tune. The status line shows it too:
+Above the prompt, the **play bar** shows the phrase as it moves and a **pause/play** button: click it, or press `ctrl+x tab` then `p`, when you need quiet in a hurry. Run `/beatpilot` to open the full player beside the chat: what's playing, the 16-bar phrase as it moves, the chords, which layers are in, and controls for genre, volume, pause and a new tune. The status line shows it too:
 
 ```
 ♪ lofi · E♭ dorian · ▮▮▯ · bar 9/16
@@ -90,7 +90,7 @@ Settings live in `/config` under Beatpilot:
 |---|---|---|
 | Genre | techno | Which engine plays (also switchable from the player or `/beatpilot <genre>`) |
 | Now playing in the status line | on | Genre, key, energy and bar |
-| Phrase meter above the prompt | off | A one-line view of the 16-bar phrase |
+| Play bar above the prompt | on | The 16-bar phrase plus a pause/play button: click it, or `ctrl+x tab` then `p` |
 | New tune per prompt | on | Each prompt gets its own key and melody. Off: one tune per project |
 | Play in headless sessions | off | Also play during `claude -p` / SDK runs |
 

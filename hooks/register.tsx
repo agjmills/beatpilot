@@ -422,20 +422,39 @@ export const register: Register = (on, options) => {
     )
   })
 
+  // The play bar above the prompt: what's playing plus pause/play, so the
+  // music can be stopped with one click (or ctrl+x tab, then p) mid-session.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (!showBand || e.props.hasSurvey || (await read($, bandHiddenAtom))) return next(e)
+    if (!showBand || player === null || e.props.hasSurvey || (await read($, bandHiddenAtom))) return next(e)
+    const status = await read($, statusAtom)
     const now = await read($, nowAtom)
-    if (now === null || !now.playing) return next(e)
+    const isOff = status === 'off'
+    if (!isOff && status !== 'starting' && now === null) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
+    const toggle = (
+      <Button
+        key="play-pause"
+        hotkey="p"
+        label={isOff ? '▶ play' : '⏸ pause'}
+        onPress={() => void (isOff ? player?.resume() : player?.pause())}
+      />
+    )
     return (
       <Box gap={1}>
-        <Text>
-          <Text dimColor>♪ {now.genre} </Text>
-          {now.arr.map((level, i) =>
-            i === now.bar ? <Text inverse>{levelBlock(level)}</Text> : <Text dimColor>{levelBlock(level)}</Text>,
-          )}
-          <Text dimColor> {energyMeter(now.energy)}</Text>
-        </Text>
+        {isOff || now === null ? (
+          <Text dimColor>♪ {isOff ? 'paused' : 'starting…'}</Text>
+        ) : now.playing ? (
+          <Text>
+            <Text dimColor>♪ {now.genre} </Text>
+            {now.arr.map((level, i) =>
+              i === now.bar ? <Text inverse>{levelBlock(level)}</Text> : <Text dimColor>{levelBlock(level)}</Text>,
+            )}
+            <Text dimColor> {energyMeter(now.energy)}</Text>
+          </Text>
+        ) : (
+          <Text dimColor>♪ {now.genre} · resting</Text>
+        )}
+        {status === 'starting' && now === null ? null : toggle}
         <Button key="hide" label="hide" onPress={() => void update($, bandHiddenAtom, () => true)} />
       </Box>
     )
