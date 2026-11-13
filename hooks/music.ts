@@ -28,7 +28,17 @@ export function tuneOf(text: string): Tune {
 /** The state file the engines read: energy, key, scale, seed, timestamp. */
 export function stateText(energy: number, tune: Tune, ts: number): string {
   const e = Math.max(0, Math.min(3, Math.round(energy)))
-  return `${e}\n${tune.key}\n${tune.scale}\n${tune.seed}\n${Math.floor(ts)}\n`
+  return `${e}\n${tune.key}\n${tune.scale}\n${tune.seed}\n${stampOf(ts)}\n`
+}
+
+/**
+ * The state file's change marker, from a time in ms. ChucK's Std.atoi is
+ * 32-bit, so a raw millisecond timestamp (13 digits) wraps to garbage, often
+ * negative, and the engines ignore it. Engines only compare it for change and
+ * require it > 0, so keep it in 1..1e9 (it wraps every ~11.5 days).
+ */
+export function stampOf(ms: number): number {
+  return (Math.floor(Math.abs(ms)) % 1_000_000_000) + 1
 }
 
 const ints = (text: string | undefined): number[] =>
