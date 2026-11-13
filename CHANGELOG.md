@@ -1,3 +1,10 @@
+## [0.5.1](https://github.com/agjmills/beatpilot/compare/v0.5.0...v0.5.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* keep the state timestamp within ChucK's 32-bit atoi ([05f43a6](https://github.com/agjmills/beatpilot/commit/05f43a69675cfdda5cc3f3aa4a114b75ff5cfcb9))
+
 # [0.5.0](https://github.com/agjmills/beatpilot/compare/v0.4.0...v0.5.0) (2026-11-13)
 
 
