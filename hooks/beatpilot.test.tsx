@@ -1,7 +1,7 @@
 import type { On } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { chordName, energyFromRate, parseNow, scaleName, stateText, statusText, tuneOf } from './music'
+import { chordName, energyFromRate, parseNow, scaleName, stampOf, stateText, statusText, tuneOf } from './music'
 
 const NOW_TEXT = [
   'genre techno',
@@ -30,7 +30,17 @@ describe('music helpers', () => {
   })
 
   test('the state file has the five lines the engines read', async () => {
-    expect(stateText(5, { key: 1, scale: 2, seed: 3 }, 1234.7)).toBe('3\n1\n2\n3\n1234\n')
+    expect(stateText(5, { key: 1, scale: 2, seed: 3 }, 1234.7)).toBe('3\n1\n2\n3\n1235\n')
+  })
+
+  test('the timestamp fits the engines 32-bit atoi and still changes every ms', async () => {
+    // A real clock reading: 13 digits wraps negative in ChucK's Std.atoi.
+    const now = 1_794_570_052_276
+    for (const ms of [now, now + 1, 0, 999_999_999, 2 ** 40]) {
+      const stamp = stampOf(ms)
+      expect(stamp > 0 && stamp < 2 ** 31).toBe(true)
+    }
+    expect(stampOf(now + 1)).not.toBe(stampOf(now))
   })
 
   test('the engine report parses, and a half-written one does not', async () => {

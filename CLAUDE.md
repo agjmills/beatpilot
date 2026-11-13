@@ -206,6 +206,7 @@ The principles above are written for groove genres. Where they don't fit:
 ### 21. ChucK gotchas
 - A function that reads a global declared **later** in the file compiles fine and crashes at runtime. Declare globals before any function that uses them.
 - `/` on ints is integer division and `%` keeps the sign of the dividend: write a `floorDiv` helper for degree maths (3b).
+- `Std.atoi` is **32-bit**: `Std.atoi("1794570052276")` gives `-726277452`. Anything an engine parses (the state file's timestamp included) must stay below 2^31; writers keep the timestamp in 1..1e9.
 - `--silent` runs faster than real time: good for analysis, but time-based behaviour (decay, idle fade) happens in seconds of wall time.
 
 ### 22. Verifying without listening
@@ -224,7 +225,7 @@ energy (0-3)
 key (0-11)
 scale (index)
 seed (0-255)
-timestamp (any value that changes per write)
+timestamp (a positive integer below 2^31 that changes per write)
 ```
 Read once per bar (step 0):
 - **Energy** acts on every new timestamp.

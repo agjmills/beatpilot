@@ -55,9 +55,10 @@ if [ -z "$seed" ]; then
     scale_type=$(( (hash_int / 12) % 4 ))
     seed=$(( (hash_int / 48) % 256 ))
 fi
-# Engines only compare timestamps for change; add sub-second noise so two
-# writes in the same second both count.
-ts="$(date +%s)$(printf '%03d' $((RANDOM % 1000)))"
+# Engines only compare the timestamp for change and need it > 0, and ChucK's
+# Std.atoi is 32-bit: keep it in 1..1e9. The sub-second noise lets two writes
+# in the same second both count.
+ts=$(( ($(date +%s) % 1000000) * 1000 + RANDOM % 1000 + 1 ))
 
 # --- Write state atomically ---
 tmp="${BP_STATE}.$$"
